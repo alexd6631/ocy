@@ -9,7 +9,3 @@ edition = "2018"
 [dependencies]
 eyre = "0.6"
 glob = "0.3"
-humansize = "1.1"
-colored = "2.0"
-[[bin]]
-name = "project-cleaner-test"
