@@ -1,0 +1,46 @@
+use crate::{filesystem::FileSystemClean, walker::DeletionCandidate};
+use eyre::Report;
+
+pub struct Cleaner<CS, FS, N>
+where
+    CS: IntoIterator<Item = DeletionCandidate>,
+    FS: FileSystemClean,
+    N: CleanerNotifier,
+{
+    candidates: CS,
+    fs: FS,
+    notifier: N,
+}
+
+pub trait CleanerNotifier {
+    fn notify_removal_success(&self, candidate: DeletionCandidate);
+    fn notify_removal_failed(&self, candidate: DeletionCandidate, report: Report);
+}
+
+impl<CS, FS, N> Cleaner<CS, FS, N>
+where
+    CS: IntoIterator<Item = DeletionCandidate>,
+    FS: FileSystemClean,
+    N: CleanerNotifier,
+{
+    pub fn new(candidates: CS, fs: FS, notifier: N) -> Self {
+        Self {
+            candidates,
+            fs,
+            notifier,
+        }
+    }
+
+    pub fn clean(self) {
+        for candidate in self.candidates.into_iter() {
+            match self.fs.remove_file(&candidate.file_info) {
+                Ok(_) => {
+                    self.notifier.notify_removal_success(candidate);
+                }
+                Err(report) => {
+                    self.notifier.notify_removal_failed(candidate, report);
+                }
+            }
+        }
+    }
+}
