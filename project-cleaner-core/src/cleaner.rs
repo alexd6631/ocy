@@ -1,9 +1,9 @@
-use crate::{filesystem::FileSystemClean, walker::DeletionCandidate};
+use crate::{filesystem::FileSystemClean, walker::RemovalCandidate};
 use eyre::Report;
 
 pub struct Cleaner<CS, FS, N>
 where
-    CS: IntoIterator<Item = DeletionCandidate>,
+    CS: IntoIterator<Item = RemovalCandidate>,
     FS: FileSystemClean,
     N: CleanerNotifier,
 {
@@ -13,13 +13,13 @@ where
 }
 
 pub trait CleanerNotifier {
-    fn notify_removal_success(&self, candidate: DeletionCandidate);
-    fn notify_removal_failed(&self, candidate: DeletionCandidate, report: Report);
+    fn notify_removal_success(&self, candidate: RemovalCandidate);
+    fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report);
 }
 
 impl<CS, FS, N> Cleaner<CS, FS, N>
 where
-    CS: IntoIterator<Item = DeletionCandidate>,
+    CS: IntoIterator<Item = RemovalCandidate>,
     FS: FileSystemClean,
     N: CleanerNotifier,
 {

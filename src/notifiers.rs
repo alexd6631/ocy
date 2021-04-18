@@ -4,20 +4,20 @@ use eyre::Report;
 use project_cleaner_core::{
     cleaner::CleanerNotifier,
     filesystem::FileInfo,
-    walker::{DeletionCandidate, WalkNotifier},
+    walker::{RemovalCandidate, WalkNotifier},
 };
 use std::cell::RefCell;
 pub struct LoggingCleanerNotifier;
 
 impl CleanerNotifier for LoggingCleanerNotifier {
-    fn notify_removal_success(&self, candidate: DeletionCandidate) {
+    fn notify_removal_success(&self, candidate: RemovalCandidate) {
         println!(
             "{}",
             format!("Deleted {:?}", candidate.file_info.path).green()
         );
     }
 
-    fn notify_removal_failed(&self, candidate: DeletionCandidate, report: Report) {
+    fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report) {
         eprintln!(
             "{}",
             format!(
@@ -31,11 +31,11 @@ impl CleanerNotifier for LoggingCleanerNotifier {
 
 #[derive(Debug, Default)]
 pub struct VecWalkNotifier {
-    pub to_remove: RefCell<Vec<DeletionCandidate>>,
+    pub to_remove: RefCell<Vec<RemovalCandidate>>,
 }
 
 impl WalkNotifier for &VecWalkNotifier {
-    fn notify_candidate_for_removal(&self, candidate: DeletionCandidate) {
+    fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
         println!(
             "[{:>6}] {:>9} {:?}",
             candidate.matcher_name.green(),

@@ -14,13 +14,13 @@ pub struct Walker<FS: FileSystem, N: WalkNotifier> {
 }
 
 #[derive(Debug)]
-pub struct DeletionCandidate {
+pub struct RemovalCandidate {
     pub matcher_name: Arc<str>,
     pub file_info: FileInfo,
     pub file_size: Option<u64>,
 }
 
-impl DeletionCandidate {
+impl RemovalCandidate {
     pub fn new(matcher_name: Arc<str>, file_info: FileInfo, file_size: Option<u64>) -> Self {
         Self {
             matcher_name,
@@ -31,7 +31,7 @@ impl DeletionCandidate {
 }
 
 pub trait WalkNotifier {
-    fn notify_candidate_for_removal(&self, candidate: DeletionCandidate);
+    fn notify_candidate_for_removal(&self, candidate: RemovalCandidate);
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report);
 }
 
@@ -63,22 +63,25 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         let mut entries = self.fs.list_files(&file)?;
 
         for matcher in &self.matchers {
-            if entries.iter().any(|e| matcher.to_match.matches(&e.name)) {
-                let (to_remove, remaining): (Vec<_>, Vec<_>) = entries
-                    .into_iter()
-                    .partition(|e| matcher.to_remove.matches(&e.name));
-                to_remove.into_iter().for_each(|e| {
-                    let candidate = DeletionCandidate::new(
-                        matcher.name.clone(),
-                        e,
-                        self.fs.file_size(file).ok(),
-                    );
-                    self.notifier.notify_candidate_for_removal(candidate);
-                });
+            if matcher.any_entry_match(&entries) {
+                let (to_remove, remaining) = matcher.find_files_to_remove(entries);
+                self.notify_removal_candidates(matcher, to_remove);
                 entries = remaining;
             }
         }
         entries.retain(|e| e.kind == SimpleFileKind::Directory && e.name != ".git");
         Ok(entries)
+    }
+
+    fn notify_removal_candidates(&self, matcher: &Matcher, to_remove: Vec<FileInfo>) {
+        to_remove
+            .into_iter()
+            .map(|f| self.removal_candidate(matcher, f))
+            .for_each(|c| self.notifier.notify_candidate_for_removal(c));
+    }
+
+    fn removal_candidate(&self, matcher: &Matcher, file: FileInfo) -> RemovalCandidate {
+        let size = self.fs.file_size(&file).ok();
+        RemovalCandidate::new(matcher.name.clone(), file, size)
     }
 }
