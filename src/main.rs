@@ -1,15 +1,14 @@
-mod filesize;
 mod matchers;
 mod notifiers;
+mod utils;
 
 use colored::Colorize;
-use filesize::format_file_size;
 use matchers::standard_matchers;
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
 use project_cleaner_core::cleaner::Cleaner;
 use project_cleaner_core::filesystem::RealFileSystem;
 use project_cleaner_core::walker::Walker;
-use std::io::Write;
+use utils::{format_file_size, prompt};
 
 fn main() {
     let fs = RealFileSystem;
@@ -28,14 +27,11 @@ fn main() {
     println!();
 
     let total_size = files.iter().map(|e| e.file_size.unwrap_or(0)).sum::<u64>();
-    print!("Reclaim {} (y/N) ? ", format_file_size(total_size).blue());
-    std::io::stdout().flush().unwrap();
 
-    let mut buffer = String::new();
-    let stdin = std::io::stdin();
-    stdin.read_line(&mut buffer).unwrap();
-
-    if buffer.trim().to_ascii_lowercase() == "y" {
+    if prompt(&format!(
+        "Reclaim {} (y/N) ? ",
+        format_file_size(total_size).blue()
+    )) {
         let cleaner = Cleaner::new(files, RealFileSystem, LoggingCleanerNotifier);
         cleaner.clean();
     }

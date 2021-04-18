@@ -1,4 +1,4 @@
-use crate::filesize::format_file_size;
+use crate::utils::format_file_size;
 use colored::Colorize;
 use eyre::Report;
 use project_cleaner_core::{
