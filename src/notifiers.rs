@@ -22,25 +22,27 @@ impl LoggingCleanerNotifier {
 
 impl CleanerNotifier for &LoggingCleanerNotifier {
     fn notify_removal_started(&self, candidate: &RemovalCandidate) {
-        self.progress_bar.set_message(&format!("Removing {:?}", candidate.file_info.path));    
+        self.progress_bar
+            .set_message(&format!("Removing {:?}", candidate.file_info.path));
     }
 
     fn notify_removal_success(&self, candidate: RemovalCandidate) {
-        self.progress_bar.println(format!(
-            "{}",
-            format!("Removed {:?}", candidate.file_info.path).green()
-        ));
+        self.progress_bar.println(
+            format!("Removed {:?}", candidate.file_info.path)
+                .green()
+                .to_string(),
+        );
     }
 
     fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report) {
-        self.progress_bar.println(format!(
-            "{}",
+        self.progress_bar.println(
             format!(
                 "Failed to remove {:?}: {}",
                 candidate.file_info.path, report
             )
             .red()
-        ));
+            .to_string(),
+        );
     }
 
     fn notify_removal_finish(&self) {
@@ -68,7 +70,8 @@ impl VecWalkNotifier {
 
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_entered_directory(&self, dir: &FileInfo) {
-        self.progress_bar.set_message(&format!("Scanning {:?}", dir.path));    
+        self.progress_bar
+            .set_message(&format!("Scanning {:?}", dir.path));
     }
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
@@ -83,10 +86,11 @@ impl WalkNotifier for &VecWalkNotifier {
     }
 
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report) {
-        self.progress_bar.println(format!(
-            "{}",
-            format!("Failed to scan {:?}: {}", e.path, report).red()
-        ));
+        self.progress_bar.println(
+            format!("Failed to scan {:?}: {}", e.path, report)
+                .red()
+                .to_string(),
+        );
     }
 
     fn notify_walk_finish(&self) {
