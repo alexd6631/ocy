@@ -5,17 +5,17 @@ mod utils;
 use colored::Colorize;
 use matchers::standard_matchers;
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
-use project_cleaner_core::cleaner::Cleaner;
-use project_cleaner_core::filesystem::RealFileSystem;
-use project_cleaner_core::walker::Walker;
+use ocy_core::cleaner::Cleaner;
+use ocy_core::filesystem::RealFileSystem;
+use ocy_core::walker::Walker;
 use utils::{format_file_size, prompt};
 
 fn main() {
-    let fs = RealFileSystem;
+    print_banner();
 
+    let fs = RealFileSystem;
     let matchers = standard_matchers();
     let walker_notifier = VecWalkNotifier::default();
-
     let walker = Walker::new(fs, matchers, &walker_notifier);
     walker.simple_walk();
 
@@ -30,9 +30,14 @@ fn main() {
 
     if prompt(&format!(
         "Reclaim {} (y/N) ? ",
-        format_file_size(total_size).blue()
+        format_file_size(total_size).cyan()
     )) {
         let cleaner = Cleaner::new(files, RealFileSystem, LoggingCleanerNotifier);
         cleaner.clean();
     }
+}
+
+fn print_banner() {
+    let banner = include_str!("../data/banner.txt");
+    println!("{}", banner.yellow());
 }

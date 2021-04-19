@@ -1,5 +1,5 @@
 use glob::Pattern;
-use project_cleaner_core::matcher::Matcher;
+use ocy_core::matcher::Matcher;
 
 pub fn standard_matchers() -> Vec<Matcher> {
     vec![

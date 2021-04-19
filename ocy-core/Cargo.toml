@@ -1,5 +1,5 @@
 [package]
-name = "project-cleaner-core"
+name = "ocy-core"
 version = "0.1.0"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
 edition = "2018"

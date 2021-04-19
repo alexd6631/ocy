@@ -1,5 +1,5 @@
 [package]
-name = "project-cleaner"
+name = "ocy"
 version = "0.1.0"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
 edition = "2018"
@@ -8,7 +8,7 @@ edition = "2018"
 
 [workspace]
 members = [
-    "project-cleaner-core"
+    "ocy-core"
 ]
 
 [dependencies]
@@ -16,4 +16,4 @@ eyre = "0.6"
 glob = "0.3"
 humansize = "1.1"
 colored = "2.0"
-project-cleaner-core = { path = "./project-cleaner-core" }
+ocy-core = { path = "./ocy-core" }

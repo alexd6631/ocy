@@ -1,7 +1,7 @@
 use crate::utils::format_file_size;
 use colored::Colorize;
 use eyre::Report;
-use project_cleaner_core::{
+use ocy_core::{
     cleaner::CleanerNotifier,
     filesystem::FileInfo,
     walker::{RemovalCandidate, WalkNotifier},
@@ -37,9 +37,9 @@ pub struct VecWalkNotifier {
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
         println!(
-            "[{:>6}] {:>9} {:?}",
+            "{:>9} {:>9} {:?}",
             candidate.matcher_name.green(),
-            format_file_size(candidate.file_size.unwrap_or(0)).blue(),
+            format_file_size(candidate.file_size.unwrap_or(0)).cyan(),
             candidate.file_info.path,
         );
 

@@ -72,29 +72,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9385f66bf6105b241aa65a61cb923ef20efc665cb9f9bb50ac2f0c4b7f378d41"
 
 [[package]]
-name = "once_cell"
-version = "1.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af8b08b04175473088b46763e51ee54da5f9a164bc162f615b91bc179dbf15a3"
-
-[[package]]
-name = "project-cleaner"
+name = "ocy"
 version = "0.1.0"
 dependencies = [
  "colored",
  "eyre",
  "glob",
  "humansize",
- "project-cleaner-core",
+ "ocy-core",
 ]
 
 [[package]]
-name = "project-cleaner-core"
+name = "ocy-core"
 version = "0.1.0"
 dependencies = [
  "eyre",
  "glob",
 ]
+
+[[package]]
+name = "once_cell"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af8b08b04175473088b46763e51ee54da5f9a164bc162f615b91bc179dbf15a3"
 
 [[package]]
 name = "winapi"
