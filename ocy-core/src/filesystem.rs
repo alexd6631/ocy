@@ -119,6 +119,7 @@ pub struct MockFileSystemClean;
 
 impl FileSystemClean for MockFileSystemClean {
     fn remove_file(&self, _file: &FileInfo) -> Result<()> {
+        std::thread::sleep(std::time::Duration::from_secs(1));
         Ok(())
         //        Err(eyre::eyre!("Failed"))
     }

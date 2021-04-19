@@ -13,8 +13,10 @@ where
 }
 
 pub trait CleanerNotifier {
+    fn notify_removal_started(&self, candidate: &RemovalCandidate);
     fn notify_removal_success(&self, candidate: RemovalCandidate);
     fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report);
+    fn notify_removal_finish(&self);
 }
 
 impl<CS, FS, N> Cleaner<CS, FS, N>
@@ -33,6 +35,7 @@ where
 
     pub fn clean(self) {
         for candidate in self.candidates.into_iter() {
+            self.notifier.notify_removal_started(&candidate);
             match self.fs.remove_file(&candidate.file_info) {
                 Ok(_) => {
                     self.notifier.notify_removal_success(candidate);
@@ -42,5 +45,6 @@ where
                 }
             }
         }
+        self.notifier.notify_removal_finish();
     }
 }

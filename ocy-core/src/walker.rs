@@ -31,8 +31,10 @@ impl RemovalCandidate {
 }
 
 pub trait WalkNotifier {
+    fn notify_entered_directory(&self, dir: &FileInfo);
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate);
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report);
+    fn notify_walk_finish(&self);
 }
 
 impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
@@ -48,6 +50,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         let current = self.fs.current_directory().unwrap();
 
         self.process_dir(&current);
+        self.notifier.notify_walk_finish();
     }
 
     fn process_dir(&self, file: &FileInfo) {
@@ -60,6 +63,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn process_entries(&self, file: &FileInfo) -> Result<Vec<FileInfo>> {
+        self.notifier.notify_entered_directory(file);
         let mut entries = self.fs.list_files(&file)?;
 
         for matcher in &self.matchers {
