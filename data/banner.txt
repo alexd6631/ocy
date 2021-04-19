@@ -5,5 +5,5 @@
       -/   "   \-
      /-|       |-\
     / /-\     /-\ \
-     / /-`---'-\ \     ocy - project cleaner
+     / /-`---'-\ \     ocy $VERSION - project cleaner
       /         \

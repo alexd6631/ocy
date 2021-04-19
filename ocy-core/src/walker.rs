@@ -44,7 +44,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         }
     }
 
-    pub fn simple_walk(&self) {
+    pub fn walk_from_current_directory(&self) {
         let current = self.fs.current_directory().unwrap();
 
         self.process_dir(&current);

@@ -17,7 +17,7 @@ fn main() {
     let matchers = standard_matchers();
     let walker_notifier = VecWalkNotifier::default();
     let walker = Walker::new(fs, matchers, &walker_notifier);
-    walker.simple_walk();
+    walker.walk_from_current_directory();
 
     let files = walker_notifier.to_remove.into_inner();
     if files.is_empty() {
@@ -38,6 +38,8 @@ fn main() {
 }
 
 fn print_banner() {
-    let banner = include_str!("../data/banner.txt");
+    let version = std::env!("CARGO_PKG_VERSION");
+    let banner_template = include_str!("../data/banner.txt");
+    let banner = banner_template.replace("$VERSION", &version);
     println!("{}", banner.yellow());
 }
