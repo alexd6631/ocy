@@ -1,4 +1,4 @@
-use crate::utils::format_file_size;
+use crate::utils::{format_file_size, format_path, format_path_truncate};
 use colored::Colorize;
 use eyre::Report;
 use indicatif::ProgressBar;
@@ -22,13 +22,15 @@ impl LoggingCleanerNotifier {
 
 impl CleanerNotifier for &LoggingCleanerNotifier {
     fn notify_removal_started(&self, candidate: &RemovalCandidate) {
-        self.progress_bar
-            .set_message(&format!("Removing {:?}", candidate.file_info.path));
+        self.progress_bar.set_message(&format!(
+            "Removing {}",
+            format_path(&candidate.file_info.path)
+        ));
     }
 
     fn notify_removal_success(&self, candidate: RemovalCandidate) {
         self.progress_bar.println(
-            format!("Removed {:?}", candidate.file_info.path)
+            format!("Removed {}", format_path(&candidate.file_info.path))
                 .green()
                 .to_string(),
         );
@@ -37,8 +39,9 @@ impl CleanerNotifier for &LoggingCleanerNotifier {
     fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report) {
         self.progress_bar.println(
             format!(
-                "Failed to remove {:?}: {}",
-                candidate.file_info.path, report
+                "Failed to remove {}: {}",
+                format_path(&candidate.file_info.path),
+                report
             )
             .red()
             .to_string(),
@@ -71,15 +74,15 @@ impl VecWalkNotifier {
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_entered_directory(&self, dir: &FileInfo) {
         self.progress_bar
-            .set_message(&format!("Scanning {:?}", dir.path));
+            .set_message(&format!("Scanning {}", format_path_truncate(&dir.path)));
     }
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
         self.progress_bar.println(format!(
-            "{:>9} {:>9} {:?}",
+            "{:>9} {:>9} {}",
             candidate.matcher_name.green(),
             format_file_size(candidate.file_size.unwrap_or(0)).cyan(),
-            candidate.file_info.path,
+            format_path(&candidate.file_info.path),
         ));
 
         self.to_remove.borrow_mut().push(candidate);
@@ -87,7 +90,7 @@ impl WalkNotifier for &VecWalkNotifier {
 
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report) {
         self.progress_bar.println(
-            format!("Failed to scan {:?}: {}", e.path, report)
+            format!("Failed to scan {}: {}", format_path(&e.path), report)
                 .red()
                 .to_string(),
         );
