@@ -1,7 +1,7 @@
 use crate::utils::{format_file_size, format_path, format_path_truncate};
 use colored::Colorize;
 use eyre::Report;
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use ocy_core::{
     cleaner::CleanerNotifier,
     filesystem::FileInfo,
@@ -13,8 +13,13 @@ pub struct LoggingCleanerNotifier {
 }
 
 impl LoggingCleanerNotifier {
-    pub fn new() -> Self {
-        let progress_bar = ProgressBar::new_spinner();
+    pub fn new(size: usize) -> Self {
+        let progress_bar = ProgressBar::new(size as u64);
+        progress_bar.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner} {bar:40} {pos:>7}/{len:7} {msg}")
+                .progress_chars("#>-"),
+        );
         progress_bar.enable_steady_tick(50);
         Self { progress_bar }
     }
@@ -29,6 +34,7 @@ impl CleanerNotifier for &LoggingCleanerNotifier {
     }
 
     fn notify_removal_success(&self, candidate: RemovalCandidate) {
+        self.progress_bar.inc(1);
         self.progress_bar.println(
             format!("Removed {}", format_path(&candidate.file_info.path))
                 .green()
@@ -37,6 +43,7 @@ impl CleanerNotifier for &LoggingCleanerNotifier {
     }
 
     fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report) {
+        self.progress_bar.inc(1);
         self.progress_bar.println(
             format!(
                 "Failed to remove {}: {}",

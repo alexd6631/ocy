@@ -43,7 +43,7 @@ fn perform_walk() -> Vec<RemovalCandidate> {
 
 fn perform_clean(files: Vec<RemovalCandidate>) {
     let fs = RealFileSystem;
-    let notifier = LoggingCleanerNotifier::new();
+    let notifier = LoggingCleanerNotifier::new(files.len());
     let cleaner = Cleaner::new(files, fs, &notifier);
     cleaner.clean();
 }
