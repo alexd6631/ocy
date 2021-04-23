@@ -3,6 +3,8 @@ name = "ocy"
 version = "0.1.0"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
 edition = "2018"
+description = "ocy is a simple project cleaner CLI"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,7 +18,7 @@ eyre = "0.6"
 glob = "0.3"
 humansize = "1.1"
 colored = "2.0"
-ocy-core = { path = "./ocy-core" }
+ocy-core = { path = "./ocy-core", version = "0.1.0" }
 indicatif = "0.15"
 
 [profile.release]
