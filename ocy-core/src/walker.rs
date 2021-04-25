@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::{
     filesystem::{FileInfo, FileSystem, SimpleFileKind},
@@ -11,6 +11,7 @@ pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     fs: FS,
     matchers: Vec<Matcher>,
     notifier: N,
+    ignores: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -38,11 +39,12 @@ pub trait WalkNotifier {
 }
 
 impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
-    pub fn new(fs: FS, matchers: Vec<Matcher>, notifier: N) -> Self {
+    pub fn new(fs: FS, matchers: Vec<Matcher>, notifier: N, ignores: HashSet<PathBuf>) -> Self {
         Self {
             fs,
             matchers,
             notifier,
+            ignores,
         }
     }
 
@@ -54,6 +56,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn process_dir(&self, file: &FileInfo) {
+        if self.ignores.contains(&file.path) {
+            return;
+        }
         match self.process_entries(file) {
             Ok(children) => {
                 children.iter().for_each(|d| self.process_dir(&d));
@@ -68,7 +73,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
         for matcher in &self.matchers {
             if matcher.any_entry_match(&entries) {
-                let (to_remove, remaining) = matcher.find_files_to_remove(entries);
+                let (mut to_remove, remaining) = matcher.find_files_to_remove(entries);
+                to_remove.retain(|p| !self.ignores.contains(&p.path));
                 self.notify_removal_candidates(matcher, to_remove);
                 entries = remaining;
             }

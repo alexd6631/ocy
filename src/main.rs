@@ -1,19 +1,33 @@
 mod matchers;
 mod notifiers;
+mod options;
 mod utils;
 
 use colored::Colorize;
+use gumdrop::Options;
 use matchers::standard_matchers;
-use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
+use std::{collections::HashSet, path::PathBuf};
+
 use ocy_core::filesystem::RealFileSystem;
 use ocy_core::walker::Walker;
 use ocy_core::{cleaner::Cleaner, walker::RemovalCandidate};
+
+use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
+use options::OcyOptions;
 use utils::{format_file_size, prompt};
 
 fn main() {
+    let options = OcyOptions::parse_args_default_or_exit();
+
     print_banner();
 
-    let files = perform_walk();
+    if options.version {
+        return;
+    }
+
+    let ignores = options.get_ignores_set();
+
+    let files = perform_walk(ignores);
     if files.is_empty() {
         println!("No projects found");
         return;
@@ -30,12 +44,12 @@ fn main() {
     }
 }
 
-fn perform_walk() -> Vec<RemovalCandidate> {
+fn perform_walk(ignores: HashSet<PathBuf>) -> Vec<RemovalCandidate> {
     let fs = RealFileSystem;
     let matchers = standard_matchers();
 
     let notifier = VecWalkNotifier::new();
-    let walker = Walker::new(fs, matchers, &notifier);
+    let walker = Walker::new(fs, matchers, &notifier, ignores);
 
     walker.walk_from_current_directory();
     notifier.to_remove.into_inner()
