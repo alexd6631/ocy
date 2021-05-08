@@ -1,6 +1,6 @@
 [package]
 name = "ocy-core"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
 edition = "2018"
 description = "Core package for ocy project cleaner CLI"

@@ -27,7 +27,7 @@ impl LoggingCleanerNotifier {
 
 impl CleanerNotifier for &LoggingCleanerNotifier {
     fn notify_removal_started(&self, candidate: &RemovalCandidate) {
-        self.progress_bar.set_message(&format!(
+        self.progress_bar.set_message(format!(
             "Removing {}",
             format_path(&candidate.file_info.path)
         ));
@@ -81,7 +81,7 @@ impl VecWalkNotifier {
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_entered_directory(&self, dir: &FileInfo) {
         self.progress_bar
-            .set_message(&format!("Scanning {}", format_path_truncate(&dir.path)));
+            .set_message(format!("Scanning {}", format_path_truncate(&dir.path)));
     }
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {

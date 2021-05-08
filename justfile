@@ -1,5 +1,4 @@
-publish-core:
+publish-all:
     cd ocy-core && cargo publish
-
-publish: publish-core
+    sleep 5
     cargo publish
