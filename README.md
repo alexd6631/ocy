@@ -3,6 +3,12 @@
 Ocy is a simple, temporary build files cleaner CLI written in Rust.
 
 ![](./ocy.gif)
+
+## Installation
+
+```
+cargo install ocy
+```
 ## Motivation
 
 I use to play a lot with several languages / techs and regularily end up with GB used by temporary build outputs on my litte Macbook Pro SSD. 
