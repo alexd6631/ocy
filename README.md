@@ -2,6 +2,7 @@
 
 Ocy is a simple, temporary build files cleaner CLI written in Rust.
 
+![](./ocy.gif)
 ## Motivation
 
 I use to play a lot with several languages / techs and regularily end up with GB used by temporary build outputs on my litte Macbook Pro SSD. 
@@ -24,16 +25,16 @@ Each build/project system have its own convention for storing temporary build fi
 Ocy is based on the idea of rules for detecting projects.
 In the current form a pattern is given for detecting the project, and another pattern for files and folders to delete.
 
-| Rule name | Project matcher | Files to delete |
-|-----------|-----------------|-----------------|
-|Cargo    | Cargo.toml    |target|
-|Gradle   | build.gradle  |build|
-|GradleKTS| build.gradle.kts|build        |
-|Maven    | pom.xml       |target|
-|NodeJS   | *             |node_modules|
-|XCode    | *             |DerivedData|
-|SBT      | build.sbt     |target|
-|SBT      | plugins.sbt   |target|
+| Rule name | Project matcher  | Files to delete |
+| --------- | ---------------- | --------------- |
+| Cargo     | Cargo.toml       | target          |
+| Gradle    | build.gradle     | build           |
+| GradleKTS | build.gradle.kts | build           |
+| Maven     | pom.xml          | target          |
+| NodeJS    | *                | node_modules    |
+| XCode     | *                | DerivedData     |
+| SBT       | build.sbt        | target          |
+| SBT       | plugins.sbt      | target          |
 
 ## Usage
 
@@ -46,3 +47,8 @@ Optional arguments:
   -v, --version          print version
   -a, --all              walk into hidden dirs
 ```
+
+## Future plans
+
+  - Make a TUI, since the "UI" is decoupled from the cleaning logic (`ocy-core`) it should be easy to support both CLI and TUI
+  - Add user customizable rules, and support more projects / more complex rules definition
