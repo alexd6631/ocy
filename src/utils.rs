@@ -16,15 +16,20 @@ pub fn prompt(message: &str) -> bool {
     buffer.trim().to_ascii_lowercase() == "y"
 }
 
-pub fn format_path(p: &Path) -> String {
+pub fn format_path(base_path: &Path, p: &Path) -> String {
+    let p = try_relativize_path(base_path, p);
     p.as_os_str().to_string_lossy().to_string()
 }
 
-pub fn format_path_truncate(p: &Path) -> String {
-    let mut p = format_path(p);
+pub fn format_path_truncate(base_path: &Path, p: &Path) -> String {
+    let mut p = format_path(base_path, p);
     let n = p.len();
     if n > 80 {
         p.replace_range(0..n - 80, "...");
     }
     p
+}
+
+fn try_relativize_path<'a>(base_path: &'a Path, path: &'a Path) -> &'a Path {
+    path.strip_prefix(base_path).unwrap_or(path)
 }

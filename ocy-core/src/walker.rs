@@ -39,12 +39,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         }
     }
 
-    pub fn walk_from_current_directory(&self) -> Result<()> {
-        let current = self.fs.current_directory()?;
-
-        self.process_dir(&current);
+    pub fn walk_from_path(&self, path: &FileInfo) {
+        self.process_dir(&path);
         self.notifier.notify_walk_finish();
-        Ok(())
     }
 
     fn process_dir(&self, file: &FileInfo) {
