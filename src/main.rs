@@ -9,7 +9,7 @@ use gumdrop::Options;
 use matchers::standard_matchers;
 use std::{collections::HashSet, path::PathBuf, process::exit};
 
-use ocy_core::filesystem::{FileSystem, RealFileSystem};
+use ocy_core::filesystem::{FileInfo, FileSystem, RealFileSystem};
 use ocy_core::walker::Walker;
 use ocy_core::{cleaner::Cleaner, walker::RemovalCandidate};
 
@@ -28,7 +28,11 @@ fn main() -> Result<()> {
 
     let ignores = options.get_ignores_set();
 
-    let files = perform_walk(ignores, options.walk_all)?;
+    let current_directory = RealFileSystem
+        .current_directory()
+        .wrap_err("Cannot scan current directory")?;
+
+    let files = perform_walk(&current_directory, ignores, options.walk_all);
     if files.is_empty() {
         println!("No projects found");
         exit(1);
@@ -41,29 +45,29 @@ fn main() -> Result<()> {
         "Reclaim {} (y/N) ? ",
         format_file_size(total_size).cyan()
     )) {
-        perform_clean(files);
+        perform_clean(&current_directory, files);
     }
 
     Ok(())
 }
 
-fn perform_walk(ignores: HashSet<PathBuf>, walk_all: bool) -> Result<Vec<RemovalCandidate>> {
+fn perform_walk(
+    current_directory: &FileInfo,
+    ignores: HashSet<PathBuf>,
+    walk_all: bool,
+) -> Vec<RemovalCandidate> {
     let fs = RealFileSystem;
     let matchers = standard_matchers();
-
-    let base_path = fs.current_directory()?.path;
-    let notifier = VecWalkNotifier::new(base_path);
+    let notifier = VecWalkNotifier::new(&current_directory.path);
     let walker = Walker::new(fs, matchers, &notifier, ignores, walk_all);
 
-    walker
-        .walk_from_current_directory()
-        .wrap_err("Cannot scan current directory")?;
-    Ok(notifier.to_remove.into_inner())
+    walker.walk_from_path(current_directory);
+    notifier.to_remove.into_inner()
 }
 
-fn perform_clean(files: Vec<RemovalCandidate>) {
+fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>) {
     let fs = RealFileSystem;
-    let notifier = LoggingCleanerNotifier::new(files.len());
+    let notifier = LoggingCleanerNotifier::new(&current_directory.path, files.len());
     let cleaner = Cleaner::new(files, fs, &notifier);
     cleaner.clean();
 }
