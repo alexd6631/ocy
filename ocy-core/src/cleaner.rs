@@ -34,7 +34,7 @@ where
     }
 
     pub fn clean(self) {
-        for candidate in self.candidates.into_iter() {
+        for candidate in self.candidates {
             self.notifier.notify_removal_started(&candidate);
             match self.fs.remove_file(&candidate.file_info) {
                 Ok(_) => {

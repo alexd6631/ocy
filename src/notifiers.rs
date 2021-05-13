@@ -73,8 +73,14 @@ impl VecWalkNotifier {
         progress_bar.enable_steady_tick(50);
         Self {
             progress_bar,
-            to_remove: Default::default(),
+            to_remove: RefCell::default(),
         }
+    }
+}
+
+impl Default for VecWalkNotifier {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

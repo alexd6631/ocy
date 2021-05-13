@@ -52,7 +52,7 @@ impl FileSystem for RealFileSystem {
         fs::read_dir(&file.path)?
             .map(|e| {
                 e.context("failed to read dir entry")
-                    .and_then(|e| map_entry_to_simple_file(e))
+                    .and_then(|entry| map_entry_to_simple_file(&entry))
             })
             .collect()
     }
@@ -71,11 +71,11 @@ impl RealFileSystem {
 
         if path.as_ref().is_dir() {
             for entry in fs::read_dir(&path)? {
-                let _path = entry?.path();
-                if _path.is_file() {
-                    result += _path.metadata()?.len();
+                let current_path = entry?.path();
+                if current_path.is_file() {
+                    result += current_path.metadata()?.len();
                 } else {
-                    result += RealFileSystem::get_size(_path)?;
+                    result += RealFileSystem::get_size(current_path)?;
                 }
             }
         } else {
@@ -85,7 +85,7 @@ impl RealFileSystem {
     }
 }
 
-fn map_entry_to_simple_file(entry: DirEntry) -> Result<FileInfo> {
+fn map_entry_to_simple_file(entry: &DirEntry) -> Result<FileInfo> {
     let path = entry.path();
 
     let name = entry

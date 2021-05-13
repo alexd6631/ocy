@@ -39,7 +39,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         }
     }
 
-    pub fn walk_from_current_directory(&self) -> Result<()>{
+    pub fn walk_from_current_directory(&self) -> Result<()> {
         let current = self.fs.current_directory()?;
 
         self.process_dir(&current);
@@ -94,7 +94,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn is_walkable(&self, file: &FileInfo) -> bool {
-        file.kind == SimpleFileKind::Directory && (self.walk_all || !file.name.starts_with("."))
+        file.kind == SimpleFileKind::Directory && (self.walk_all || !file.name.starts_with('.'))
     }
 }
 

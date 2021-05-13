@@ -13,8 +13,8 @@ pub struct OcyOptions {
     #[options(help = "print version")]
     pub version: bool,
 
-    #[options(short = "a", long ="all", help = "walk into hidden dirs")]
-    pub walk_all: bool
+    #[options(short = "a", long = "all", help = "walk into hidden dirs")]
+    pub walk_all: bool,
 }
 
 impl OcyOptions {
