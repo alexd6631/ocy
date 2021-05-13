@@ -4,6 +4,16 @@ Ocy is a simple, temporary build files cleaner CLI written in Rust.
 
 ![](./ocy.gif)
 
+## Colophon
+
+Ocy is short for Ocypode cordimanus, or smooth-handed ghost crab.
+Like all crabs of the genus Ocypode, it has one claw larger than the other (as on the banner).
+
+Although he's so cute, ocy is a scavenger, so he can take care of your dead bytes.
+
+<a title="The author could not be identified automatically. It is assumed that it is : Matilda (given the copyright claim)., CC BY-SA 2.5 &lt;https://creativecommons.org/licenses/by-sa/2.5&gt;, via Wikimedia Commons" href="https://commons.wikimedia.org/wiki/File:BBayCrab2.jpg"><img width="512" alt="BBayCrab2" src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/BBayCrab2.jpg/512px-BBayCrab2.jpg"></a>
+
+
 ## Installation
 
 ```
