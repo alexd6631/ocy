@@ -7,7 +7,7 @@ use ocy_core::{
     filesystem::FileInfo,
     walker::{RemovalCandidate, WalkNotifier},
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, path::PathBuf};
 pub struct LoggingCleanerNotifier {
     pub progress_bar: ProgressBar,
 }
@@ -63,39 +63,41 @@ impl CleanerNotifier for &LoggingCleanerNotifier {
 
 #[derive(Debug)]
 pub struct VecWalkNotifier {
+    base_path: PathBuf,
     pub progress_bar: ProgressBar,
     pub to_remove: RefCell<Vec<RemovalCandidate>>,
 }
 
 impl VecWalkNotifier {
-    pub fn new() -> Self {
+    pub fn new(base_path: PathBuf) -> Self {
         let progress_bar = ProgressBar::new_spinner();
         progress_bar.enable_steady_tick(50);
         Self {
+            base_path,
             progress_bar,
             to_remove: RefCell::default(),
         }
     }
 }
 
-impl Default for VecWalkNotifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_entered_directory(&self, dir: &FileInfo) {
+        let relative_path = dir.path.strip_prefix(&self.base_path).unwrap_or(&dir.path);
         self.progress_bar
-            .set_message(format!("Scanning {}", format_path_truncate(&dir.path)));
+            .set_message(format!("Scanning {}", format_path_truncate(&relative_path)));
     }
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
+        let relative_path = candidate
+            .file_info
+            .path
+            .strip_prefix(&self.base_path)
+            .unwrap_or(&candidate.file_info.path);
         self.progress_bar.println(format!(
             "{:>9} {:>9} {}",
             candidate.matcher_name.green(),
             format_file_size(candidate.file_size.unwrap_or(0)).cyan(),
-            format_path(&candidate.file_info.path),
+            format_path(&relative_path),
         ));
 
         self.to_remove.borrow_mut().push(candidate);

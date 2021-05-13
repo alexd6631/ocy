@@ -9,7 +9,7 @@ use gumdrop::Options;
 use matchers::standard_matchers;
 use std::{collections::HashSet, path::PathBuf, process::exit};
 
-use ocy_core::filesystem::RealFileSystem;
+use ocy_core::filesystem::{FileSystem, RealFileSystem};
 use ocy_core::walker::Walker;
 use ocy_core::{cleaner::Cleaner, walker::RemovalCandidate};
 
@@ -51,7 +51,8 @@ fn perform_walk(ignores: HashSet<PathBuf>, walk_all: bool) -> Result<Vec<Removal
     let fs = RealFileSystem;
     let matchers = standard_matchers();
 
-    let notifier = VecWalkNotifier::new();
+    let base_path = fs.current_directory()?.path;
+    let notifier = VecWalkNotifier::new(base_path);
     let walker = Walker::new(fs, matchers, &notifier, ignores, walk_all);
 
     walker
