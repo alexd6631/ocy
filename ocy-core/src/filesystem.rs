@@ -20,7 +20,7 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    fn new(path: PathBuf, name: String, kind: SimpleFileKind) -> Self {
+    pub(crate) fn new(path: PathBuf, name: String, kind: SimpleFileKind) -> Self {
         Self { path, name, kind }
     }
 }
