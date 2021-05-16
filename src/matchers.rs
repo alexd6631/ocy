@@ -21,5 +21,6 @@ pub fn standard_matchers() -> Vec<Matcher> {
         matcher!("XCode", "*", "DerivedData"),
         matcher!("SBT", "build.sbt", "target"),
         matcher!("SBT", "plugins.sbt", "target"),
+        matcher!("CMake", "CMakeCache.txt", "CMakeFiles"),
     ]
 }
