@@ -182,7 +182,6 @@ mod tests {
         walker.walk_from_path(&current_dir);
 
         let to_remove = notifier.to_remove.into_inner();
-        println!("{:?}", to_remove);
 
         assert_eq!(1, to_remove.len());
         let c = to_remove.into_iter().next().unwrap();

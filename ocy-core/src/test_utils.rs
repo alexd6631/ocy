@@ -20,6 +20,26 @@ pub struct MockFSNode {
 }
 
 impl MockFSNode {
+    fn file_kind(&self) -> SimpleFileKind {
+        if self.children.is_empty() {
+            SimpleFileKind::File
+        } else {
+            SimpleFileKind::Directory
+        }
+    }
+
+    fn to_file_info(&self, parent: &Path) -> FileInfo {
+        let mut new_path = parent.to_path_buf();
+        new_path.push(&self.name);
+        FileInfo::new(
+            new_path,
+            self.name.to_string_lossy().to_string(),
+            self.file_kind(),
+        )
+    }
+}
+
+impl MockFSNode {
     pub fn file(name: &str) -> Self {
         MockFSNode {
             name: name.into(),
@@ -61,19 +81,7 @@ impl FileSystem for MockFS {
         let files = node
             .children
             .iter()
-            .map(|node| {
-                let mut new_path = path.to_path_buf();
-                new_path.push(&node.name);
-                FileInfo::new(
-                    new_path,
-                    node.name.to_string_lossy().to_string(),
-                    if node.children.is_empty() {
-                        SimpleFileKind::File
-                    } else {
-                        SimpleFileKind::Directory
-                    },
-                )
-            })
+            .map(|node| node.to_file_info(path))
             .collect();
         Ok(files)
     }
