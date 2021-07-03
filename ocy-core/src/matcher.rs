@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use glob::Pattern;
 
-use crate::filesystem::FileInfo;
+use crate::models::FileInfo;
 
 pub struct Matcher {
     pub name: Arc<str>,

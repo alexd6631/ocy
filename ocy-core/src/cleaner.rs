@@ -1,7 +1,7 @@
 use crate::{
     command::CommandExecutor,
     filesystem::FileSystemClean,
-    walker::{RemovalAction, RemovalCandidate},
+    models::{RemovalAction, RemovalCandidate},
 };
 use eyre::Report;
 use eyre::Result;

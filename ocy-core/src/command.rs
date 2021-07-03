@@ -1,6 +1,6 @@
 use std::{process::Command, thread::sleep, time::Duration};
 
-use crate::filesystem::FileInfo;
+use crate::models::FileInfo;
 
 use eyre::{Context, Result};
 

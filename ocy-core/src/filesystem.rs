@@ -2,28 +2,12 @@ use eyre::Context;
 use eyre::Result;
 
 use std::{
-    fmt::Debug,
     fs::{self, DirEntry},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleFileKind {
-    File,
-    Directory,
-}
-#[derive(Debug, Clone)]
-pub struct FileInfo {
-    pub path: PathBuf,
-    pub name: String,
-    pub kind: SimpleFileKind,
-}
-
-impl FileInfo {
-    pub(crate) fn new(path: PathBuf, name: String, kind: SimpleFileKind) -> Self {
-        Self { path, name, kind }
-    }
-}
+use crate::models::FileInfo;
+use crate::models::SimpleFileKind;
 
 pub trait FileSystem {
     fn current_directory(&self) -> Result<FileInfo>;

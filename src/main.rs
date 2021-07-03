@@ -10,13 +10,14 @@ use matchers::standard_matchers;
 use ocy_core::command::RealCommandExecutor;
 use std::{collections::HashSet, path::PathBuf, process::exit};
 
-use ocy_core::filesystem::{FileInfo, FileSystem, RealFileSystem};
+use ocy_core::filesystem::{FileSystem, RealFileSystem};
+use ocy_core::models::FileInfo;
 use ocy_core::walker::Walker;
-use ocy_core::{cleaner::Cleaner, walker::RemovalCandidate};
+use ocy_core::{cleaner::Cleaner, models::RemovalCandidate};
 
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
 use options::OcyOptions;
-use utils::{prompt, format_file_size_and_more};
+use utils::{format_file_size_and_more, prompt};
 
 fn main() -> Result<()> {
     let options = OcyOptions::parse_args_default_or_exit();

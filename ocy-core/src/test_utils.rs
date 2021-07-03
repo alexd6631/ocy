@@ -2,7 +2,8 @@ use std::{ffi::OsString, path::Path};
 
 use eyre::ContextCompat;
 
-use crate::filesystem::{FileInfo, FileSystem, SimpleFileKind};
+use crate::filesystem::FileSystem;
+use crate::models::{FileInfo, SimpleFileKind};
 
 pub struct MockFS {
     root: MockFSNode,

@@ -1,8 +1,10 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf};
 
 use crate::{
-    filesystem::{FileInfo, FileSystem, SimpleFileKind},
+    filesystem::FileSystem,
     matcher::{CleanStrategy, Matcher},
+    models::RemovalCandidate,
+    models::{FileInfo, SimpleFileKind},
 };
 use eyre::Report;
 use eyre::Result;
@@ -113,58 +115,6 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 }
 
-#[derive(Debug)]
-pub enum RemovalAction {
-    Delete {
-        file_info: FileInfo,
-        file_size: Option<u64>,
-    },
-    RunCommand {
-        work_dir: FileInfo,
-        command: Arc<str>,
-    },
-}
-#[derive(Debug)]
-pub struct RemovalCandidate {
-    pub matcher_name: Arc<str>,
-    pub action: RemovalAction,
-}
-
-impl RemovalCandidate {
-    pub fn new(matcher_name: Arc<str>, file_info: FileInfo, file_size: Option<u64>) -> Self {
-        let action = RemovalAction::Delete {
-            file_info,
-            file_size,
-        };
-        Self {
-            matcher_name,
-            action,
-        }
-    }
-
-    pub fn new_cmd(matcher_name: Arc<str>, work_dir: FileInfo, command: Arc<str>) -> Self {
-        let action = RemovalAction::RunCommand { work_dir, command };
-        Self {
-            matcher_name,
-            action,
-        }
-    }
-
-    pub fn estimate_file_size(&self) -> u64 {
-        match &self.action {
-            RemovalAction::Delete { file_size, .. } => file_size.unwrap_or(0),
-            RemovalAction::RunCommand { .. } => 0,
-        }
-    }
-
-    pub fn file_size(&self) -> Option<u64> {
-        match &self.action {
-            RemovalAction::Delete { file_size, .. } => file_size.clone(),
-            RemovalAction::RunCommand { .. } => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, collections::HashSet, path::PathBuf, str::FromStr};
@@ -172,13 +122,15 @@ mod tests {
     use glob::Pattern;
 
     use crate::{
-        filesystem::{FileInfo, FileSystem},
+        filesystem::FileSystem,
         matcher::Matcher,
+        models::FileInfo,
         test_utils::{MockFS, MockFSNode},
         walker::Walker,
     };
 
-    use super::{RemovalCandidate, WalkNotifier};
+    use super::WalkNotifier;
+    use crate::models::{RemovalAction, RemovalCandidate};
 
     #[derive(Debug, Default)]
     struct VecWalkNotifier {
@@ -241,13 +193,13 @@ mod tests {
         assert_eq!(c.matcher_name.as_ref(), "Cargo");
 
         match c.action {
-            crate::walker::RemovalAction::Delete { file_info, .. } => {
+            RemovalAction::Delete { file_info, .. } => {
                 assert_eq!(
                     file_info.path,
                     PathBuf::from_str("/home/user/projectA/target").unwrap()
                 )
             }
-            crate::walker::RemovalAction::RunCommand { work_dir, command } => {
+            RemovalAction::RunCommand { work_dir, command } => {
                 panic!("should be delete")
             }
         }

@@ -4,8 +4,8 @@ use eyre::Report;
 use indicatif::{ProgressBar, ProgressStyle};
 use ocy_core::{
     cleaner::CleanerNotifier,
-    filesystem::FileInfo,
-    walker::{RemovalCandidate, WalkNotifier},
+    models::{FileInfo, RemovalAction, RemovalCandidate},
+    walker::WalkNotifier,
 };
 use std::{cell::RefCell, path::Path};
 pub struct LoggingCleanerNotifier<'a> {
@@ -129,10 +129,8 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
 
 fn format_candidate(base_path: &Path, candidate: &RemovalCandidate) -> String {
     match &candidate.action {
-        ocy_core::walker::RemovalAction::Delete { file_info, .. } => {
-            format_path(base_path, &file_info.path)
-        }
-        ocy_core::walker::RemovalAction::RunCommand { work_dir, command } => {
+        RemovalAction::Delete { file_info, .. } => format_path(base_path, &file_info.path),
+        RemovalAction::RunCommand { work_dir, command } => {
             let path_str = format_path(base_path, &work_dir.path);
             format!("`{}` in `{}`", &command, path_str)
         }
@@ -147,12 +145,12 @@ enum ActionLabel {
 
 fn format_clean_action(candidate: &RemovalCandidate, label: ActionLabel) -> &'static str {
     match &candidate.action {
-        ocy_core::walker::RemovalAction::Delete { .. } => match label {
+        RemovalAction::Delete { .. } => match label {
             ActionLabel::Start => "Removing",
             ActionLabel::Success => "Removed",
             ActionLabel::Failed => "Failed to remove",
         },
-        ocy_core::walker::RemovalAction::RunCommand { .. } => match label {
+        RemovalAction::RunCommand { .. } => match label {
             ActionLabel::Start => "Executing",
             ActionLabel::Success => "Executed",
             ActionLabel::Failed => "Failed to execute",
