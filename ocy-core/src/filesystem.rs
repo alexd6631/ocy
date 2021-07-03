@@ -7,12 +7,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SimpleFileKind {
     File,
     Directory,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileInfo {
     pub path: PathBuf,
     pub name: String,

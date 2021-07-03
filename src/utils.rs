@@ -1,6 +1,23 @@
 use indicatif::HumanBytes;
 use std::{io::Write, path::Path};
 
+pub fn format_opt_file_size(size: Option<u64>) -> String {
+    if let Some(size) = size {
+        format_file_size(size)
+    } else {
+        "-".to_string()
+    }
+}
+
+pub fn format_file_size_and_more(size: u64, has_more: bool) -> String {
+    let size = format_file_size(size);
+    if has_more {
+        format!("{}+", size)
+    } else {
+        size
+    }
+}
+
 pub fn format_file_size(size: u64) -> String {
     HumanBytes(size).to_string()
 }

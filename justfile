@@ -1,3 +1,6 @@
+install:
+    cargo install --path .
+
 publish-all:
     cd ocy-core && cargo publish
     sleep 30

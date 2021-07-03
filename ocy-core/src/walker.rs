@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::{
     filesystem::{FileInfo, FileSystem, SimpleFileKind},
-    matcher::Matcher,
+    matcher::{CleanStrategy, Matcher},
 };
 use eyre::Report;
 use eyre::Result;
@@ -61,18 +61,36 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         let mut entries = self.fs.list_files(&file)?;
 
         for matcher in &self.matchers {
-            entries = self.process_matcher(matcher, entries);
+            entries = self.process_matcher(file, matcher, entries);
         }
         entries.retain(|f| self.is_walkable(f));
         Ok(entries)
     }
 
-    fn process_matcher(&self, matcher: &Matcher, entries: Vec<FileInfo>) -> Vec<FileInfo> {
+    fn process_matcher(
+        &self,
+        work_dir: &FileInfo,
+        matcher: &Matcher,
+        entries: Vec<FileInfo>,
+    ) -> Vec<FileInfo> {
         if matcher.any_entry_match(&entries) {
-            let (mut to_remove, remaining) = matcher.find_files_to_remove(entries);
-            to_remove.retain(|p| !self.ignores.contains(&p.path));
-            self.notify_removal_candidates(matcher, to_remove);
-            remaining
+            match &matcher.clean_strategy {
+                CleanStrategy::Remove(pattern) => {
+                    let (mut to_remove, remaining) = pattern.find_files_to_remove(entries);
+                    to_remove.retain(|p| !self.ignores.contains(&p.path));
+                    self.notify_removal_candidates(matcher, to_remove);
+                    remaining
+                }
+                CleanStrategy::RunCommand(cmd) => {
+                    let candidate = RemovalCandidate::new_cmd(
+                        matcher.name.clone(),
+                        work_dir.clone(),
+                        cmd.clone(),
+                    );
+                    self.notifier.notify_candidate_for_removal(candidate);
+                    entries
+                }
+            }
         } else {
             entries
         }
@@ -96,18 +114,53 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 }
 
 #[derive(Debug)]
+pub enum RemovalAction {
+    Delete {
+        file_info: FileInfo,
+        file_size: Option<u64>,
+    },
+    RunCommand {
+        work_dir: FileInfo,
+        command: Arc<str>,
+    },
+}
+#[derive(Debug)]
 pub struct RemovalCandidate {
     pub matcher_name: Arc<str>,
-    pub file_info: FileInfo,
-    pub file_size: Option<u64>,
+    pub action: RemovalAction,
 }
 
 impl RemovalCandidate {
     pub fn new(matcher_name: Arc<str>, file_info: FileInfo, file_size: Option<u64>) -> Self {
-        Self {
-            matcher_name,
+        let action = RemovalAction::Delete {
             file_info,
             file_size,
+        };
+        Self {
+            matcher_name,
+            action,
+        }
+    }
+
+    pub fn new_cmd(matcher_name: Arc<str>, work_dir: FileInfo, command: Arc<str>) -> Self {
+        let action = RemovalAction::RunCommand { work_dir, command };
+        Self {
+            matcher_name,
+            action,
+        }
+    }
+
+    pub fn estimate_file_size(&self) -> u64 {
+        match &self.action {
+            RemovalAction::Delete { file_size, .. } => file_size.unwrap_or(0),
+            RemovalAction::RunCommand { .. } => 0,
+        }
+    }
+
+    pub fn file_size(&self) -> Option<u64> {
+        match &self.action {
+            RemovalAction::Delete { file_size, .. } => file_size.clone(),
+            RemovalAction::RunCommand { .. } => None,
         }
     }
 }
@@ -170,7 +223,7 @@ mod tests {
         let notifier = VecWalkNotifier::default();
         let walker = Walker::new(
             fs,
-            vec![Matcher::new(
+            vec![Matcher::with_remove_strategy(
                 "Cargo".into(),
                 Pattern::new("Cargo.toml")?,
                 Pattern::new("target")?,
@@ -186,7 +239,18 @@ mod tests {
         assert_eq!(1, to_remove.len());
         let c = to_remove.into_iter().next().unwrap();
         assert_eq!(c.matcher_name.as_ref(), "Cargo");
-        assert_eq!(c.file_info.path, PathBuf::from_str("/home/user/projectA/target").unwrap());
+
+        match c.action {
+            crate::walker::RemovalAction::Delete { file_info, .. } => {
+                assert_eq!(
+                    file_info.path,
+                    PathBuf::from_str("/home/user/projectA/target").unwrap()
+                )
+            }
+            crate::walker::RemovalAction::RunCommand { work_dir, command } => {
+                panic!("should be delete")
+            }
+        }
 
         Ok(())
     }

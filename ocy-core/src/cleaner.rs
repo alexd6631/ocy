@@ -1,14 +1,21 @@
-use crate::{filesystem::FileSystemClean, walker::RemovalCandidate};
+use crate::{
+    command::CommandExecutor,
+    filesystem::FileSystemClean,
+    walker::{RemovalAction, RemovalCandidate},
+};
 use eyre::Report;
+use eyre::Result;
 
-pub struct Cleaner<CS, FS, N>
+pub struct Cleaner<CS, CE, FS, N>
 where
     CS: IntoIterator<Item = RemovalCandidate>,
     FS: FileSystemClean,
+    CE: CommandExecutor,
     N: CleanerNotifier,
 {
     candidates: CS,
     fs: FS,
+    command_executor: CE,
     notifier: N,
 }
 
@@ -19,16 +26,18 @@ pub trait CleanerNotifier {
     fn notify_removal_finish(&self);
 }
 
-impl<CS, FS, N> Cleaner<CS, FS, N>
+impl<CS, CE, FS, N> Cleaner<CS, CE, FS, N>
 where
     CS: IntoIterator<Item = RemovalCandidate>,
     FS: FileSystemClean,
+    CE: CommandExecutor,
     N: CleanerNotifier,
 {
-    pub fn new(candidates: CS, fs: FS, notifier: N) -> Self {
+    pub fn new(candidates: CS, fs: FS, command_executor: CE, notifier: N) -> Self {
         Self {
             candidates,
             fs,
+            command_executor,
             notifier,
         }
     }
@@ -36,7 +45,7 @@ where
     pub fn clean(self) {
         for candidate in self.candidates {
             self.notifier.notify_removal_started(&candidate);
-            match self.fs.remove_file(&candidate.file_info) {
+            match clean_candidate(&self.fs, &self.command_executor, &candidate) {
                 Ok(_) => {
                     self.notifier.notify_removal_success(candidate);
                 }
@@ -46,5 +55,18 @@ where
             }
         }
         self.notifier.notify_removal_finish();
+    }
+}
+
+fn clean_candidate(
+    fs: &impl FileSystemClean,
+    command_executor: &impl CommandExecutor,
+    candidate: &RemovalCandidate,
+) -> Result<()> {
+    match &candidate.action {
+        RemovalAction::Delete { file_info, .. } => fs.remove_file(file_info),
+        RemovalAction::RunCommand { work_dir, command } => {
+            command_executor.execute_command(work_dir, &command)
+        }
     }
 }

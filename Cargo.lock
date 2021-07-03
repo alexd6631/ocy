@@ -124,7 +124,7 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "ocy"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "colored",
  "eyre",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "ocy-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "eyre",
  "glob",

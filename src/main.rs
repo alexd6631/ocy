@@ -7,6 +7,7 @@ use colored::Colorize;
 use eyre::{Context, Result};
 use gumdrop::Options;
 use matchers::standard_matchers;
+use ocy_core::command::RealCommandExecutor;
 use std::{collections::HashSet, path::PathBuf, process::exit};
 
 use ocy_core::filesystem::{FileInfo, FileSystem, RealFileSystem};
@@ -15,7 +16,7 @@ use ocy_core::{cleaner::Cleaner, walker::RemovalCandidate};
 
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
 use options::OcyOptions;
-use utils::{format_file_size, prompt};
+use utils::{prompt, format_file_size_and_more};
 
 fn main() -> Result<()> {
     let options = OcyOptions::parse_args_default_or_exit();
@@ -39,11 +40,11 @@ fn main() -> Result<()> {
     }
     println!();
 
-    let total_size = total_size(&files);
+    let (total_size, has_more) = total_size(&files);
 
     if prompt(&format!(
         "Reclaim {} (y/N) ? ",
-        format_file_size(total_size).cyan()
+        format_file_size_and_more(total_size, has_more).cyan(),
     )) {
         perform_clean(&current_directory, files);
     }
@@ -67,13 +68,16 @@ fn perform_walk(
 
 fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>) {
     let fs = RealFileSystem;
+    let ce = RealCommandExecutor;
     let notifier = LoggingCleanerNotifier::new(&current_directory.path, files.len());
-    let cleaner = Cleaner::new(files, fs, &notifier);
+    let cleaner = Cleaner::new(files, fs, ce, &notifier);
     cleaner.clean();
 }
 
-fn total_size(files: &[RemovalCandidate]) -> u64 {
-    files.iter().map(|e| e.file_size.unwrap_or(0)).sum()
+fn total_size(files: &[RemovalCandidate]) -> (u64, bool) {
+    let estimate = files.iter().map(|e| e.estimate_file_size()).sum();
+    let has_more = files.iter().any(|e| e.file_size().is_none());
+    (estimate, has_more)
 }
 
 fn print_banner() {

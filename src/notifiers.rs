@@ -1,4 +1,4 @@
-use crate::utils::{format_file_size, format_path, format_path_truncate};
+use crate::utils::{format_opt_file_size, format_path, format_path_truncate};
 use colored::Colorize;
 use eyre::Report;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -32,8 +32,9 @@ impl<'a> LoggingCleanerNotifier<'a> {
 impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
     fn notify_removal_started(&self, candidate: &RemovalCandidate) {
         self.progress_bar.set_message(format!(
-            "Removing {}",
-            format_path(self.base_path, &candidate.file_info.path)
+            "{} {}",
+            format_clean_action(&candidate, ActionLabel::Start),
+            format_candidate(self.base_path, &candidate)
         ));
     }
 
@@ -41,8 +42,9 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
         self.progress_bar.inc(1);
         self.progress_bar.println(
             format!(
-                "Removed {}",
-                format_path(self.base_path, &candidate.file_info.path)
+                "{} {}",
+                format_clean_action(&candidate, ActionLabel::Success),
+                format_candidate(self.base_path, &candidate)
             )
             .green()
             .to_string(),
@@ -53,8 +55,9 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
         self.progress_bar.inc(1);
         self.progress_bar.println(
             format!(
-                "Failed to remove {}: {}",
-                format_path(self.base_path, &candidate.file_info.path),
+                "{} {}: {}",
+                format_clean_action(&candidate, ActionLabel::Failed),
+                format_candidate(self.base_path, &candidate),
                 report
             )
             .red()
@@ -99,8 +102,8 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
         self.progress_bar.println(format!(
             "{:>9} {:>9} {}",
             candidate.matcher_name.green(),
-            format_file_size(candidate.file_size.unwrap_or(0)).cyan(),
-            format_path(self.base_path, &candidate.file_info.path),
+            format_opt_file_size(candidate.file_size()).cyan(),
+            format_candidate(self.base_path, &candidate),
         ));
 
         self.to_remove.borrow_mut().push(candidate);
@@ -121,5 +124,38 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
     fn notify_walk_finish(&self) {
         self.progress_bar.disable_steady_tick();
         self.progress_bar.finish_and_clear();
+    }
+}
+
+fn format_candidate(base_path: &Path, candidate: &RemovalCandidate) -> String {
+    match &candidate.action {
+        ocy_core::walker::RemovalAction::Delete { file_info, .. } => {
+            format_path(base_path, &file_info.path)
+        }
+        ocy_core::walker::RemovalAction::RunCommand { work_dir, command } => {
+            let path_str = format_path(base_path, &work_dir.path);
+            format!("`{}` in `{}`", &command, path_str)
+        }
+    }
+}
+
+enum ActionLabel {
+    Start,
+    Success,
+    Failed,
+}
+
+fn format_clean_action(candidate: &RemovalCandidate, label: ActionLabel) -> &'static str {
+    match &candidate.action {
+        ocy_core::walker::RemovalAction::Delete { .. } => match label {
+            ActionLabel::Start => "Removing",
+            ActionLabel::Success => "Removed",
+            ActionLabel::Failed => "Failed to remove",
+        },
+        ocy_core::walker::RemovalAction::RunCommand { .. } => match label {
+            ActionLabel::Start => "Executing",
+            ActionLabel::Success => "Executed",
+            ActionLabel::Failed => "Failed to execute",
+        },
     }
 }
