@@ -7,7 +7,8 @@ use ocy_core::{
     models::{FileInfo, RemovalAction, RemovalCandidate},
     walker::WalkNotifier,
 };
-use std::{cell::RefCell, path::Path};
+use std::{cell::RefCell, path::Path, time::Duration};
+
 pub struct LoggingCleanerNotifier<'a> {
     base_path: &'a Path,
     pub progress_bar: ProgressBar,
@@ -19,9 +20,10 @@ impl<'a> LoggingCleanerNotifier<'a> {
         progress_bar.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner} {bar:40} {pos:>7}/{len:7} {msg}")
+                .unwrap()
                 .progress_chars("#>-"),
         );
-        progress_bar.enable_steady_tick(50);
+        progress_bar.enable_steady_tick(Duration::from_millis(50));
         Self {
             base_path,
             progress_bar,
@@ -81,7 +83,7 @@ pub struct VecWalkNotifier<'a> {
 impl<'a> VecWalkNotifier<'a> {
     pub fn new(base_path: &'a Path) -> Self {
         let progress_bar = ProgressBar::new_spinner();
-        progress_bar.enable_steady_tick(50);
+        progress_bar.enable_steady_tick(Duration::from_millis(50));
         Self {
             base_path,
             progress_bar,

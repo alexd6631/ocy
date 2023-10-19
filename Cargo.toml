@@ -1,6 +1,6 @@
 [package]
 name = "ocy"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
 edition = "2021"
 description = "ocy is a simple project cleaner CLI"
@@ -16,7 +16,7 @@ eyre = "0.6"
 glob = "0.3"
 colored = "2.0"
 ocy-core = { path = "./ocy-core", version = "0.1.5" }
-indicatif = "0.16"
+indicatif = "0.17"
 gumdrop = "0.8"
 
 [profile.release]
