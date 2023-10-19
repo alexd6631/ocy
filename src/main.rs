@@ -84,6 +84,6 @@ fn total_size(files: &[RemovalCandidate]) -> (u64, bool) {
 fn print_banner() {
     let version = std::env!("CARGO_PKG_VERSION");
     let banner_template = include_str!("../data/banner.txt");
-    let banner = banner_template.replace("$VERSION", &version);
+    let banner = banner_template.replace("$VERSION", version);
     println!("{}", banner.yellow());
 }

@@ -65,7 +65,7 @@ impl RemovalCandidate {
 
     pub fn file_size(&self) -> Option<u64> {
         match &self.action {
-            RemovalAction::Delete { file_size, .. } => file_size.clone(),
+            RemovalAction::Delete { file_size, .. } => *file_size,
             RemovalAction::RunCommand { .. } => None,
         }
     }
