@@ -66,7 +66,7 @@ fn clean_candidate(
     match &candidate.action {
         RemovalAction::Delete { file_info, .. } => fs.remove_file(file_info),
         RemovalAction::RunCommand { work_dir, command } => {
-            command_executor.execute_command(work_dir, &command)
+            command_executor.execute_command(work_dir, command)
         }
     }
 }

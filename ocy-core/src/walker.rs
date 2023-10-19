@@ -42,7 +42,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     pub fn walk_from_path(&self, path: &FileInfo) {
-        self.process_dir(&path);
+        self.process_dir(path);
         self.notifier.notify_walk_finish();
     }
 
@@ -52,7 +52,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         }
         match self.process_entries(file) {
             Ok(children) => {
-                children.iter().for_each(|d| self.process_dir(&d));
+                children.iter().for_each(|d| self.process_dir(d));
             }
             Err(report) => self.notifier.notify_fail_to_scan(file, report),
         }
@@ -60,7 +60,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn process_entries(&self, file: &FileInfo) -> Result<Vec<FileInfo>> {
         self.notifier.notify_entered_directory(file);
-        let mut entries = self.fs.list_files(&file)?;
+        let mut entries = self.fs.list_files(file)?;
 
         for matcher in &self.matchers {
             entries = self.process_matcher(file, matcher, entries);

@@ -33,8 +33,8 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
     fn notify_removal_started(&self, candidate: &RemovalCandidate) {
         self.progress_bar.set_message(format!(
             "{} {}",
-            format_clean_action(&candidate, ActionLabel::Start),
-            format_candidate(self.base_path, &candidate)
+            format_clean_action(candidate, ActionLabel::Start),
+            format_candidate(self.base_path, candidate)
         ));
     }
 
