@@ -56,10 +56,11 @@ In the current form a pattern is given for detecting the project, and another
 pattern for files and folders to delete.
 
 | Rule name | Project matcher  | Files to delete |
-| --------- | ---------------- | --------------- |
+|-----------|------------------| --------------- |
 | Cargo     | Cargo.toml       | target          |
 | Gradle    | build.gradle     | build           |
 | GradleKTS | build.gradle.kts | build           |
+| Flutter   | pubspec.yaml     | build           |
 | Maven     | pom.xml          | target          |
 | NodeJS    | *                | node_modules    |
 | XCode     | *                | DerivedData     |
