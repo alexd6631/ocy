@@ -8,6 +8,7 @@ pub trait CommandExecutor {
     fn execute_command(&self, work_dir: &FileInfo, command: &str) -> Result<()>;
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MockCommandExecutor;
 
 impl CommandExecutor for MockCommandExecutor {
@@ -17,6 +18,7 @@ impl CommandExecutor for MockCommandExecutor {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct RealCommandExecutor;
 
 impl CommandExecutor for RealCommandExecutor {

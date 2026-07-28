@@ -51,21 +51,59 @@ wanted to have a quick tool for wiping them securely.
 
 ## Supported Rules
 
-`Ocy` is based on the idea of rules for detecting projects.
-In the current form a pattern is given for detecting the project, and another
-pattern for files and folders to delete.
+`Ocy` is based on the idea of rules for detecting projects. A rule names one or
+more *markers* that identify the project, and the *targets* it may reclaim. All
+markers must be present, so a rule only fires on real evidence of a project.
 
-| Rule name | Project matcher  | Files to delete |
-|-----------|------------------| --------------- |
-| Cargo     | Cargo.toml       | target          |
-| Gradle    | build.gradle     | build           |
-| GradleKTS | build.gradle.kts | build           |
-| Flutter   | pubspec.yaml     | build           |
-| Maven     | pom.xml          | target          |
-| NodeJS    | *                | node_modules    |
-| XCode     | *                | DerivedData     |
-| SBT       | build.sbt        | target          |
-| SBT       | plugins.sbt      | target          |
+| Rule name    | Markers                   | Reclaims                                                                  |
+|--------------|---------------------------|---------------------------------------------------------------------------|
+| Cargo        | Cargo.toml                | target                                                                    |
+| Gradle       | build.gradle*             | build, .gradle                                                            |
+| Maven        | pom.xml                   | target                                                                    |
+| SBT          | build.sbt                 | target, project/target                                                    |
+| NodeJS       | package.json              | node_modules, .next, .nuxt, .turbo, .svelte-kit, .parcel-cache            |
+| Angular      | angular.json              | .angular/cache                                                            |
+| Python venv  | pyvenv.cfg *(inside)*     | the virtual environment itself                                            |
+| Python       | *.py                      | \_\_pycache\_\_                                                           |
+| Python       | pyproject.toml, setup.py  | .pytest_cache, .mypy_cache, .ruff_cache, .tox, .nox, .hypothesis, build, dist |
+| .NET         | *.csproj, *.fsproj        | bin, obj                                                                  |
+| CMake        | CMakeLists.txt            | cmake-build-*, CMakeFiles                                                 |
+| Zig          | build.zig                 | .zig-cache, zig-cache, zig-out                                            |
+| SwiftPM      | Package.swift             | .build                                                                    |
+| XCode        | *.xcodeproj               | DerivedData                                                               |
+| Elixir       | mix.exs                   | \_build, deps                                                             |
+| Cabal        | *.cabal                   | dist-newstyle                                                             |
+| Stack        | stack.yaml                | .stack-work                                                               |
+| Flutter/Dart | pubspec.yaml              | build, .dart_tool                                                         |
+| Unity        | Assets **and** ProjectSettings | Library, Temp, Obj, Logs                                             |
+| Terraform    | *.tf                      | .terraform                                                                |
+| Composer     | composer.json             | vendor                                                                    |
+| Git worktree | .git                      | records of worktrees whose checkout is gone                               |
+| Make         | Makefile                  | runs `make clean` — **opt-in**, see below                                 |
+
+Three rule shapes go beyond a plain sibling match:
+
+* **Nested targets** such as `.angular/cache` reclaim only the inner directory.
+* **Self-marked** artifacts are identified by what they *contain*. A Python
+  virtual environment is any directory holding a `pyvenv.cfg`, whatever it is
+  called.
+* **Git worktree records** are checked against their `gitdir` pointer, so only
+  the ones `git worktree prune` would remove are offered. Locked records are
+  left alone.
+
+### Command rules are opt-in
+
+A rule such as `make clean` runs a script the scanned directory controls.
+Enabling that for an ordinary scan would execute arbitrary code from any tree
+that happens to contain a `Makefile`, so it requires `--allow-commands`.
+
+### Hidden directories
+
+Build output routinely hides behind a leading dot, so a hidden directory that is
+itself a target — `.next`, `.gradle`, `.terraform` — is always reclaimed. The
+walk additionally descends into `.venv` and `.worktrees`, which *contain* things
+worth finding. Use `--all` to descend into every hidden directory. Version
+control metadata (`.git`, `.svn`, `.hg`, `.jj`, `.bzr`) is never descended into.
 
 ## Usage
 
@@ -74,15 +112,36 @@ Usage: ocy [OPTIONS]
 
 Optional arguments:
   -h, --help             print help message
-  -i, --ignores IGNORES  ignore this path
+  -i, --ignore PATH      ignore path(s)
   -v, --version          print version
   -a, --all              walk into hidden dirs
+  -n, --dry-run          report what would be reclaimed, then exit without deleting
+  -A, --allow-commands   allow rules that run a project's own clean command (e.g. `make clean`)
+  -m, --max-depth N      do not descend deeper than this many levels
+  -x, --one-file-system  do not cross onto another filesystem
 ```
+
+`--ignore` was called `--ignores` before 0.2.
+
+## Platform Support
+
+Linux and macOS are fully supported. On Windows the tool works, with two
+caveats that come from what the standard library exposes there:
+
+* Sizes are apparent rather than allocated, so NTFS-compressed and sparse files
+  read larger than the space they actually free.
+* Hard-linked content is counted once per link rather than once per inode.
+* `--one-file-system` is unavailable and reports an error rather than silently
+  doing nothing.
+
+Symbolic links are never followed, on any platform — neither when walking nor
+when measuring — so a link can never make `ocy` report space that deleting it
+would not free.
 
 ## Future Plans
 
 * Make a TUI; since the ‘UI’ is decoupled from the cleaning logic (`ocy-core`)
   it should be easy to support both CLI and TUI.
 
-* Add user customizable rules, and support more projects resp. more complex
-  rule definition.
+* User-customizable rules loaded from a config file. The rule engine already
+  supports everything needed; only the parsing and file lookup are missing.

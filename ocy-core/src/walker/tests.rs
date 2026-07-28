@@ -306,3 +306,28 @@ fn reports_a_command_rule_against_its_directory() -> eyre::Result<()> {
     assert_eq!(vec!["make clean in /home/user/c-proj"], found);
     Ok(())
 }
+
+/// Rules are applied in order, so a nested target can be claimed before the parent that
+/// encloses it. Reporting both would double-count the bytes and race the two deletions.
+#[test]
+fn never_claims_a_path_inside_another_candidate() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "app",
+        vec![
+            MockFsNode::file("angular.json"),
+            MockFsNode::dir(".angular", vec![MockFsNode::empty_dir("cache")]),
+        ],
+    )]);
+
+    let found = reclaimed(
+        tree,
+        vec![
+            Rule::remove("Angular cache", &["angular.json"], &[".angular/cache"])?,
+            Rule::remove("Angular", &["angular.json"], &[".angular"])?,
+        ],
+        WalkOptions::default(),
+    );
+
+    assert_eq!(vec!["/home/user/app/.angular/cache"], found);
+    Ok(())
+}

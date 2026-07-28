@@ -19,6 +19,8 @@ impl<'a> LoggingCleanerNotifier<'a> {
         let progress_bar = ProgressBar::new(size as u64);
         progress_bar.set_style(
             ProgressStyle::default_bar()
+                // SAFETY: the template is a literal, so it either parses on every run or
+                // on none; a malformed one would fail the first test that renders a bar.
                 .template("{spinner} {bar:40} {pos:>7}/{len:7} {msg}")
                 .unwrap()
                 .progress_chars("#>-"),

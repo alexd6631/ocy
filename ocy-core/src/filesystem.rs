@@ -5,6 +5,10 @@ use eyre::Report;
 use eyre::Result;
 use std::collections::HashSet;
 use std::fs::{self, DirEntry, Metadata};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 
 /// The contents of a directory, together with any per-entry failures.
@@ -37,6 +41,7 @@ pub trait FileSystemClean {
     fn remove_file(&self, file: &FileInfo) -> Result<()>;
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct RealFileSystem;
 
 impl FileSystem for RealFileSystem {
@@ -71,7 +76,6 @@ impl FileSystem for RealFileSystem {
 
     #[cfg(unix)]
     fn device_id(&self, file: &FileInfo) -> Option<u64> {
-        use std::os::unix::fs::MetadataExt;
         fs::symlink_metadata(&file.path).ok().map(|m| m.dev())
     }
 }
@@ -138,7 +142,6 @@ fn describe_entry(entry: &DirEntry) -> Result<FileInfo> {
 
 #[cfg(unix)]
 fn allocated_bytes(metadata: &Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
     metadata.blocks() * 512
 }
 
@@ -150,7 +153,6 @@ fn allocated_bytes(metadata: &Metadata) -> u64 {
 /// Whether this entry's bytes have not already been counted through another hard link.
 #[cfg(unix)]
 fn counts_towards_total(metadata: &Metadata, seen_inodes: &mut HashSet<(u64, u64)>) -> bool {
-    use std::os::unix::fs::MetadataExt;
     metadata.nlink() <= 1 || seen_inodes.insert((metadata.dev(), metadata.ino()))
 }
 
@@ -186,8 +188,6 @@ fn remove_symlink(path: &Path) -> std::io::Result<()> {
 /// attribute decides which call to make. This never recurses, so the target is untouched.
 #[cfg(windows)]
 fn remove_symlink(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::fs::MetadataExt;
-
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
     if fs::symlink_metadata(path)?.file_attributes() & FILE_ATTRIBUTE_DIRECTORY == 0 {

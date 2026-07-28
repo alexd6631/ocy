@@ -152,8 +152,10 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             .iter()
             .flat_map(|target| self.resolve_target(entries, target))
             .filter(|found| !self.is_ignored(&found.path))
+            .filter(|found| !self.is_already_claimed(&found.path))
             .map(|found| {
                 let path = found.path.clone();
+                self.pruned.borrow_mut().insert(path.clone());
                 self.emit_removal(rule, found);
                 path
             })
@@ -216,6 +218,22 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn is_ignored(&self, path: &Path) -> bool {
         self.options.ignores.contains(path)
+    }
+
+    /// Whether this path overlaps a candidate that has already been reported.
+    ///
+    /// Reporting both a directory and something inside it would count the nested bytes
+    /// twice in the total and race the two deletions against each other. Rules within a
+    /// directory are applied in order, so the overlap can be found in either direction:
+    /// a nested target may be claimed before the parent enclosing it, or after.
+    ///
+    /// Candidates stream to the user as they are found, so the first claim stands and the
+    /// overlapping one is dropped. That can leave an enclosing directory unreclaimed,
+    /// which is the safe direction to err for a tool that deletes things.
+    fn is_already_claimed(&self, path: &Path) -> bool {
+        let pruned = self.pruned.borrow();
+        path.ancestors().any(|ancestor| pruned.contains(ancestor))
+            || pruned.iter().any(|claimed| claimed.starts_with(path))
     }
 
     fn is_walkable(&self, file: &FileInfo, depth: usize) -> bool {

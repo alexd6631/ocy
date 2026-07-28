@@ -8,7 +8,8 @@ pub struct OcyOptions {
     #[options(help = "print help message")]
     help: bool,
 
-    #[options(help = "ignore this path")]
+    /// Repeated once per path, so the flag is singular even though it collects a list.
+    #[options(short = "i", long = "ignore", meta = "PATH", help = "ignore path(s)")]
     pub ignores: Vec<PathBuf>,
 
     #[options(help = "print version")]
@@ -32,6 +33,7 @@ pub struct OcyOptions {
 
     #[options(
         long = "max-depth",
+        meta = "N",
         help = "do not descend deeper than this many levels"
     )]
     pub max_depth: Option<usize>,
