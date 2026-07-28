@@ -1,3 +1,4 @@
+use crate::palette::rule_color;
 use crate::utils::{SIZE_COLUMN_WIDTH, format_opt_file_size, format_path, format_path_truncate};
 use colored::Colorize;
 use eyre::Report;
@@ -164,7 +165,7 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
             &self.progress_bar,
             format!(
                 "{} {} {}",
-                name.green(),
+                name.color(rule_color(&candidate.matcher_name)),
                 size.cyan(),
                 format_candidate(self.base_path, &candidate),
             ),

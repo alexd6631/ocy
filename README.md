@@ -97,6 +97,18 @@ A rule such as `make clean` runs a script the scanned directory controls.
 Enabling that for an ordinary scan would execute arbitrary code from any tree
 that happens to contain a `Makefile`, so it requires `--allow-commands`.
 
+### Colour
+
+The rule-name column is tinted per ecosystem, so a long scan can be read by
+colour rather than by re-reading every row. Rules sharing a name -- the three
+Python ones, both .NET ones -- share a tint and so group visually. Tints are
+mid-tone, to stay legible on a light or a dark terminal, and anything without a
+curated tint gets a stable one derived from its name.
+
+Colour is dropped automatically when output is not a terminal, and `NO_COLOR` is
+honoured. The tints are 24-bit; a terminal without truecolor ignores them and
+prints the column plain.
+
 ### Hidden directories
 
 Build output routinely hides behind a leading dot, so a hidden directory that is

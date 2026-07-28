@@ -1,5 +1,6 @@
 mod notifiers;
 mod options;
+mod palette;
 mod rules;
 mod utils;
 
