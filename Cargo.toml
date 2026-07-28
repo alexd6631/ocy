@@ -19,6 +19,9 @@ ocy-core = { path = "./ocy-core", version = "0.2" }
 indicatif = "0.18"
 gumdrop = "0.8"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 lto = true
 codegen-units = 1

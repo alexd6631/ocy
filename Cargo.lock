@@ -186,6 +186,7 @@ dependencies = [
  "gumdrop",
  "indicatif",
  "ocy-core",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,16 +1,28 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use eyre::{Context, Result};
 use gumdrop::Options;
 
-#[derive(Debug, Options)]
+/// Separator accepted inside a single `--ignore` value.
+const IGNORE_SEPARATOR: char = ',';
+
+#[derive(Debug, Default, Options)]
 pub struct OcyOptions {
     #[options(help = "print help message")]
     help: bool,
 
-    /// Repeated once per path, so the flag is singular even though it collects a list.
-    #[options(short = "i", long = "ignore", meta = "PATH", help = "ignore path(s)")]
-    pub ignores: Vec<PathBuf>,
+    /// Held as written rather than as a [`PathBuf`], because the value is split before it
+    /// is a path. Repeated once per path, so the flag is singular despite collecting a list.
+    #[options(
+        short = "i",
+        long = "ignore",
+        meta = "PATH[,PATH...]",
+        help = "ignore path(s), repeatable"
+    )]
+    pub ignores: Vec<String>,
 
     #[options(help = "print version")]
     pub version: bool,
@@ -50,14 +62,43 @@ impl OcyOptions {
     /// The ignore paths, canonicalised.
     ///
     /// A path that cannot be resolved is an error rather than a panic: mistyping
-    /// `--ignores` is ordinary user error, not a bug.
+    /// `--ignore` is ordinary user error, not a bug.
     pub fn ignores_set(&self) -> Result<HashSet<PathBuf>> {
         self.ignores
             .iter()
-            .map(|p| {
-                p.canonicalize()
-                    .with_context(|| format!("cannot resolve ignored path {}", p.display()))
+            .map(|value| resolve_ignore(value))
+            .collect::<Result<Vec<_>>>()
+            .map(|paths| paths.into_iter().flatten().collect())
+    }
+}
+
+/// Resolve one `--ignore` value into canonical paths.
+///
+/// Both `--ignore a --ignore b` and `--ignore a,b` are accepted, and they compose.
+///
+/// A comma is legal in a filename and the shell offers no way to protect one -- quoting
+/// `"a,b"` still arrives as the bytes `a,b` -- so the value is split only when it does not
+/// already name something that exists. A directory genuinely called `a,b` therefore
+/// resolves as itself, and the ambiguous case resolves in favour of the real path, which
+/// is the reading that cannot surprise anyone into ignoring the wrong thing.
+fn resolve_ignore(value: &str) -> Result<Vec<PathBuf>> {
+    let value = value.trim();
+
+    if let Ok(path) = Path::new(value).canonicalize() {
+        Ok(vec![path])
+    } else {
+        value
+            .split(IGNORE_SEPARATOR)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                Path::new(path)
+                    .canonicalize()
+                    .with_context(|| format!("cannot resolve ignored path {path}"))
             })
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests;

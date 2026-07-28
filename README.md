@@ -112,7 +112,7 @@ Usage: ocy [OPTIONS]
 
 Optional arguments:
   -h, --help             print help message
-  -i, --ignore PATH      ignore path(s)
+  -i, --ignore PATH[,PATH...]  ignore path(s), repeatable
   -v, --version          print version
   -a, --all              walk into hidden dirs
   -n, --dry-run          report what would be reclaimed, then exit without deleting
@@ -120,6 +120,18 @@ Optional arguments:
   -m, --max-depth N      do not descend deeper than this many levels
   -x, --one-file-system  do not cross onto another filesystem
 ```
+
+`--ignore` accepts both forms, and they compose:
+
+```
+ocy --ignore build --ignore vendor
+ocy --ignore build,vendor
+```
+
+A comma is legal in a filename, and quoting cannot protect it -- the shell hands
+`"a,b"` over as the bytes `a,b` either way. So a value is only split when it does
+not already name something that exists: a directory genuinely called `a,b`
+resolves as itself.
 
 `--ignore` was called `--ignores` before 0.2.
 
