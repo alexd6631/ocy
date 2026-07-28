@@ -211,7 +211,23 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn emit_removal(&self, rule: &Rule, file: FileInfo) {
-        let size = self.fs.file_size(&file).ok();
+        let size = match self.fs.file_size(&file) {
+            Ok(size) => Some(size),
+            Err(report) => {
+                // The candidate is still offered; only its size is unknown.
+                log::debug!("cannot size {}: {report:#}", file.path.display());
+                None
+            }
+        };
+        log::debug!(
+            "rule `{}` claims {} ({})",
+            rule.name,
+            file.path.display(),
+            size.map_or_else(
+                || "size unknown".to_string(),
+                |size| format!("{size} bytes")
+            )
+        );
         self.notifier
             .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
     }
@@ -251,9 +267,15 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn is_scannable_name(&self, name: &str) -> bool {
         if VCS_DIRS.contains(&name) {
+            log::trace!("skipping {name}: version control metadata");
             false
         } else if name.starts_with('.') {
-            self.options.walk_all || self.options.scanned_hidden.contains(name)
+            let scannable = self.options.walk_all || self.options.scanned_hidden.contains(name);
+            if !scannable {
+                // The most common reason a user reports something as "not found".
+                log::debug!("skipping hidden {name}; use --all to descend into it");
+            }
+            scannable
         } else {
             true
         }

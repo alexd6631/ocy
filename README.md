@@ -135,6 +135,22 @@ resolves as itself.
 
 `--ignore` was called `--ignores` before 0.2.
 
+## Diagnostics
+
+`ocy` is silent unless `RUST_LOG` asks for output, so the normal run stays clean:
+
+```
+RUST_LOG=debug ocy --dry-run
+```
+
+`debug` reports which rule claimed each path, why a hidden directory was skipped,
+and anything that could not be sized. `trace` adds every directory considered.
+Diagnostics go to stderr, where the progress bar also draws, so expect the two to
+interleave while debugging.
+
+`ocy-core` logs through the `log` facade only, and does not pull in a logger --
+choosing one is left to whatever links it.
+
 ## Platform Support
 
 Linux and macOS are fully supported. On Windows the tool works, with two

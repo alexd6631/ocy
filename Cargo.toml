@@ -18,6 +18,7 @@ colored = "3"
 ocy-core = { path = "./ocy-core", version = "0.2" }
 indicatif = "0.18"
 gumdrop = "0.8"
+env_logger = "0.11"
 
 [dev-dependencies]
 tempfile = "3"

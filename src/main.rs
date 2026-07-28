@@ -22,6 +22,11 @@ use utils::{format_file_size_and_more, prompt};
 fn main() -> Result<ExitCode> {
     let options = OcyOptions::parse_args_default_or_exit();
 
+    // Silent unless `RUST_LOG` asks for output, so the progress display stays clean in
+    // normal use. Diagnostics go to stderr; the progress bar draws there too, so expect
+    // the two to interleave while debugging.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")).init();
+
     print_banner();
 
     if options.version {
