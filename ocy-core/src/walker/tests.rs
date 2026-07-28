@@ -1,21 +1,13 @@
-use std::{cell::RefCell, collections::HashSet, path::PathBuf, str::FromStr};
-
-use glob::Pattern;
-
-use crate::{
-    filesystem::FileSystem,
-    matcher::Matcher,
-    models::FileInfo,
-    test_utils::{MockFS, MockFSNode},
-    walker::Walker,
-};
-
-use super::WalkNotifier;
-use crate::models::{RemovalAction, RemovalCandidate};
+use super::{WalkNotifier, WalkOptions, Walker};
+use crate::filesystem::FileSystem;
+use crate::models::{FileInfo, RemovalAction, RemovalCandidate};
+use crate::rule::Rule;
+use crate::test_utils::{MockFs, MockFsNode};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf};
 
 #[derive(Debug, Default)]
 struct VecWalkNotifier {
-    pub to_remove: RefCell<Vec<RemovalCandidate>>,
+    to_remove: RefCell<Vec<RemovalCandidate>>,
 }
 
 impl WalkNotifier for &VecWalkNotifier {
@@ -30,58 +22,287 @@ impl WalkNotifier for &VecWalkNotifier {
     fn notify_walk_finish(&self) {}
 }
 
-fn setup_mock_fs() -> MockFS {
-    MockFS::new(MockFSNode::dir(
+/// The paths a walk proposes for deletion, sorted for stable comparison.
+fn reclaimed(tree: MockFsNode, rules: Vec<Rule>, options: WalkOptions) -> Vec<String> {
+    let fs = MockFs::new(tree);
+    let current_dir = fs.current_directory().unwrap();
+    let notifier = VecWalkNotifier::default();
+    let walker = Walker::new(fs, rules, &notifier, options);
+
+    walker.walk_from_path(&current_dir);
+
+    let mut paths: Vec<String> = notifier
+        .to_remove
+        .into_inner()
+        .into_iter()
+        .map(|candidate| match candidate.action {
+            RemovalAction::Delete { file_info, .. } => file_info.path.display().to_string(),
+            RemovalAction::RunCommand { work_dir, command } => {
+                format!("{command} in {}", work_dir.path.display())
+            }
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Wrap `children` in the `/home/user` prefix that [`MockFs`] scans from.
+fn under_home(children: Vec<MockFsNode>) -> MockFsNode {
+    MockFsNode::dir(
         "/",
-        vec![MockFSNode::dir(
+        vec![MockFsNode::dir(
             "home",
-            vec![MockFSNode::dir(
-                "user",
-                vec![
-                    MockFSNode::dir(
-                        "projectA",
-                        vec![MockFSNode::file("Cargo.toml"), MockFSNode::file("target")],
-                    ),
-                    MockFSNode::dir("projectB", vec![MockFSNode::file("target")]),
-                ],
-            )],
+            vec![MockFsNode::dir("user", children)],
         )],
-    ))
+    )
+}
+
+fn hidden(names: &[&str]) -> WalkOptions {
+    WalkOptions {
+        scanned_hidden: names.iter().map(|n| (*n).to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+fn cargo_rule() -> Vec<Rule> {
+    vec![Rule::remove("Cargo", &["Cargo.toml"], &["target"]).unwrap()]
 }
 
 #[test]
-fn test() -> eyre::Result<()> {
-    let fs = setup_mock_fs();
-    let current_dir = setup_mock_fs().current_directory()?;
-    let notifier = VecWalkNotifier::default();
-    let walker = Walker::new(
-        fs,
-        vec![Matcher::with_remove_strategy(
-            "Cargo".into(),
-            Pattern::new("Cargo.toml")?,
-            Pattern::new("target")?,
-        )],
-        &notifier,
-        HashSet::new(),
-        false,
+fn reclaims_a_target_beside_its_marker() -> eyre::Result<()> {
+    let tree = under_home(vec![
+        MockFsNode::dir(
+            "projectA",
+            vec![
+                MockFsNode::file("Cargo.toml"),
+                MockFsNode::empty_dir("target"),
+            ],
+        ),
+        // No Cargo.toml, so this target is not evidence of a Cargo project.
+        MockFsNode::dir("projectB", vec![MockFsNode::empty_dir("target")]),
+    ]);
+
+    let found = reclaimed(tree, cargo_rule(), WalkOptions::default());
+
+    assert_eq!(vec!["/home/user/projectA/target"], found);
+    Ok(())
+}
+
+/// A nested target reclaims only the inner directory, not its parent.
+#[test]
+fn reclaims_a_nested_target() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "app",
+        vec![
+            MockFsNode::file("angular.json"),
+            MockFsNode::dir(
+                ".angular",
+                vec![MockFsNode::dir("cache", vec![MockFsNode::file("blob")])],
+            ),
+        ],
+    )]);
+
+    let found = reclaimed(
+        tree,
+        vec![Rule::remove(
+            "Angular",
+            &["angular.json"],
+            &[".angular/cache"],
+        )?],
+        hidden(&[".angular"]),
     );
-    walker.walk_from_path(&current_dir);
 
-    let to_remove = notifier.to_remove.into_inner();
+    assert_eq!(vec!["/home/user/app/.angular/cache"], found);
+    Ok(())
+}
 
-    assert_eq!(1, to_remove.len());
-    let c = to_remove.into_iter().next().unwrap();
-    assert_eq!(c.matcher_name.as_ref(), "Cargo");
+/// A venv is identified by the `pyvenv.cfg` it contains -- issue #6. No sibling-only rule
+/// can express that, which is why `RemoveSelf` exists.
+#[test]
+fn reclaims_a_self_marked_directory() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "ml",
+        vec![
+            MockFsNode::file("main.py"),
+            MockFsNode::dir(
+                ".venv",
+                vec![
+                    MockFsNode::file("pyvenv.cfg"),
+                    MockFsNode::dir("lib", vec![MockFsNode::file("torch")]),
+                ],
+            ),
+        ],
+    )]);
 
-    match c.action {
-        RemovalAction::Delete { file_info, .. } => {
-            assert_eq!(
-                file_info.path,
-                PathBuf::from_str("/home/user/projectA/target").unwrap()
-            )
-        }
-        RemovalAction::RunCommand { .. } => panic!("should be delete"),
-    }
+    let found = reclaimed(
+        tree,
+        vec![Rule::remove_self("Python venv", &["pyvenv.cfg"])?],
+        hidden(&[".venv"]),
+    );
 
+    assert_eq!(vec!["/home/user/ml/.venv"], found);
+    Ok(())
+}
+
+/// Running ocy from inside a venv must not offer to delete the directory being scanned.
+#[test]
+fn never_reclaims_the_scan_root_itself() -> eyre::Result<()> {
+    let tree = under_home(vec![
+        MockFsNode::file("pyvenv.cfg"),
+        MockFsNode::dir("lib", vec![MockFsNode::file("torch")]),
+    ]);
+
+    let found = reclaimed(
+        tree,
+        vec![Rule::remove_self("Python venv", &["pyvenv.cfg"])?],
+        WalkOptions::default(),
+    );
+
+    assert!(
+        found.is_empty(),
+        "proposed deleting the scan root: {found:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn skips_hidden_directories_that_are_not_allow_listed() -> eyre::Result<()> {
+    let tree = || {
+        under_home(vec![MockFsNode::dir(
+            ".secret",
+            vec![MockFsNode::dir(
+                "proj",
+                vec![
+                    MockFsNode::file("Cargo.toml"),
+                    MockFsNode::empty_dir("target"),
+                ],
+            )],
+        )])
+    };
+
+    assert!(reclaimed(tree(), cargo_rule(), WalkOptions::default()).is_empty());
+
+    let with_all = WalkOptions {
+        walk_all: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        vec!["/home/user/.secret/proj/target"],
+        reclaimed(tree(), cargo_rule(), with_all)
+    );
+    Ok(())
+}
+
+/// A worktree under the conventional `.worktrees` directory is real build output and must
+/// be found without needing the blanket `--all`.
+#[test]
+fn finds_artifacts_in_an_allow_listed_hidden_directory() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        ".worktrees",
+        vec![MockFsNode::dir(
+            "feature",
+            vec![
+                MockFsNode::file("Cargo.toml"),
+                MockFsNode::empty_dir("target"),
+            ],
+        )],
+    )]);
+
+    let found = reclaimed(tree, cargo_rule(), hidden(&[".worktrees"]));
+
+    assert_eq!(vec!["/home/user/.worktrees/feature/target"], found);
+    Ok(())
+}
+
+/// `.git` holds no build output and is skipped even under `walk_all`.
+#[test]
+fn never_descends_into_version_control_metadata() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        ".git",
+        vec![MockFsNode::dir(
+            "modules",
+            vec![
+                MockFsNode::file("Cargo.toml"),
+                MockFsNode::empty_dir("target"),
+            ],
+        )],
+    )]);
+
+    let options = WalkOptions {
+        walk_all: true,
+        ..Default::default()
+    };
+    let found = reclaimed(tree, cargo_rule(), options);
+
+    assert!(found.is_empty(), "walked into .git: {found:?}");
+    Ok(())
+}
+
+#[test]
+fn honours_max_depth() -> eyre::Result<()> {
+    let tree = || {
+        under_home(vec![MockFsNode::dir(
+            "a",
+            vec![MockFsNode::dir(
+                "b",
+                vec![
+                    MockFsNode::file("Cargo.toml"),
+                    MockFsNode::empty_dir("target"),
+                ],
+            )],
+        )])
+    };
+
+    let shallow = WalkOptions {
+        max_depth: Some(1),
+        ..Default::default()
+    };
+    assert!(reclaimed(tree(), cargo_rule(), shallow).is_empty());
+
+    let deep = WalkOptions {
+        max_depth: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(
+        vec!["/home/user/a/b/target"],
+        reclaimed(tree(), cargo_rule(), deep)
+    );
+    Ok(())
+}
+
+#[test]
+fn honours_ignores() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "projectA",
+        vec![
+            MockFsNode::file("Cargo.toml"),
+            MockFsNode::empty_dir("target"),
+        ],
+    )]);
+
+    let options = WalkOptions {
+        ignores: HashSet::from([PathBuf::from("/home/user/projectA/target")]),
+        ..Default::default()
+    };
+    let found = reclaimed(tree, cargo_rule(), options);
+
+    assert!(found.is_empty(), "reclaimed an ignored path: {found:?}");
+    Ok(())
+}
+
+#[test]
+fn reports_a_command_rule_against_its_directory() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "c-proj",
+        vec![MockFsNode::file("Makefile")],
+    )]);
+
+    let found = reclaimed(
+        tree,
+        vec![Rule::run("Make", &["Makefile"], "make clean")?],
+        WalkOptions::default(),
+    );
+
+    assert_eq!(vec!["make clean in /home/user/c-proj"], found);
     Ok(())
 }

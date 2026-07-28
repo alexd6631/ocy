@@ -1,20 +1,49 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{cell::RefCell, collections::HashSet, path::Path, path::PathBuf};
 
 use crate::{
     filesystem::FileSystem,
-    matcher::{CleanStrategy, Matcher},
     models::RemovalCandidate,
     models::{FileInfo, SimpleFileKind},
+    rule::{CleanAction, Rule, Target},
 };
 use eyre::Report;
 use eyre::Result;
 
+/// Version-control metadata, never descended into.
+///
+/// These directories hold thousands of small objects and no build output. Walking them is
+/// pure cost, so they are skipped even under [`WalkOptions::walk_all`].
+pub const VCS_DIRS: &[&str] = &[".git", ".svn", ".hg", ".jj", ".bzr"];
+
+#[derive(Debug, Default, Clone)]
+pub struct WalkOptions {
+    /// Absolute paths that are neither scanned nor reclaimed.
+    pub ignores: HashSet<PathBuf>,
+
+    /// Descend into every hidden directory, not only [`WalkOptions::scanned_hidden`].
+    pub walk_all: bool,
+
+    /// Hidden directories descended into even when `walk_all` is false.
+    ///
+    /// Build output routinely hides behind a leading dot -- `.venv`, `.gradle`, `.next`.
+    /// Skipping every dotted directory by default means missing most of it.
+    pub scanned_hidden: HashSet<String>,
+
+    /// Maximum depth below the scan root, or [`None`] for unlimited.
+    pub max_depth: Option<usize>,
+
+    /// Do not cross onto another filesystem, so a scan cannot wander onto network mounts.
+    pub one_file_system: bool,
+}
+
 pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     fs: FS,
-    matchers: Vec<Matcher>,
+    rules: Vec<Rule>,
     notifier: N,
-    ignores: HashSet<PathBuf>,
-    walk_all: bool,
+    options: WalkOptions,
+    /// Paths already claimed by a rule, so nested candidates are not walked or re-reported.
+    pruned: RefCell<HashSet<PathBuf>>,
+    root_device: RefCell<Option<u64>>,
 }
 
 pub trait WalkNotifier {
@@ -24,99 +53,199 @@ pub trait WalkNotifier {
     fn notify_walk_finish(&self);
 }
 
+/// What the walk should do with a directory once its rules have been applied.
+enum DirOutcome {
+    /// Continue into these child directories.
+    Descend(Vec<FileInfo>),
+    /// The directory is itself a candidate; there is nothing below it worth visiting.
+    Reclaimed,
+}
+
 impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
-    pub fn new(
-        fs: FS,
-        matchers: Vec<Matcher>,
-        notifier: N,
-        ignores: HashSet<PathBuf>,
-        walk_all: bool,
-    ) -> Self {
+    pub fn new(fs: FS, rules: Vec<Rule>, notifier: N, options: WalkOptions) -> Self {
         Self {
             fs,
-            matchers,
+            rules,
             notifier,
-            ignores,
-            walk_all,
+            options,
+            pruned: RefCell::default(),
+            root_device: RefCell::default(),
         }
     }
 
     pub fn walk_from_path(&self, path: &FileInfo) {
-        self.process_dir(path);
+        if self.options.one_file_system {
+            *self.root_device.borrow_mut() = self.fs.device_id(path);
+        }
+        self.process_dir(path, 0);
         self.notifier.notify_walk_finish();
     }
 
-    fn process_dir(&self, file: &FileInfo) {
-        if self.ignores.contains(&file.path) {
+    fn process_dir(&self, file: &FileInfo, depth: usize) {
+        if self.is_ignored(&file.path) || self.pruned.borrow().contains(&file.path) {
             return;
         }
-        match self.process_entries(file) {
-            Ok(children) => {
-                children.iter().for_each(|d| self.process_dir(d));
-            }
+
+        match self.process_entries(file, depth) {
+            Ok(DirOutcome::Descend(children)) => children
+                .iter()
+                .for_each(|child| self.process_dir(child, depth + 1)),
+            Ok(DirOutcome::Reclaimed) => (),
             Err(report) => self.notifier.notify_fail_to_scan(file, report),
         }
     }
 
-    fn process_entries(&self, file: &FileInfo) -> Result<Vec<FileInfo>> {
-        self.notifier.notify_entered_directory(file);
-        let listing = self.fs.list_files(file)?;
+    fn process_entries(&self, dir: &FileInfo, depth: usize) -> Result<DirOutcome> {
+        self.notifier.notify_entered_directory(dir);
+
+        let listing = self.fs.list_files(dir)?;
         listing
             .errors
             .into_iter()
-            .for_each(|report| self.notifier.notify_fail_to_scan(file, report));
+            .for_each(|report| self.notifier.notify_fail_to_scan(dir, report));
         let mut entries = listing.entries;
 
-        for matcher in &self.matchers {
-            entries = self.process_matcher(file, matcher, entries);
-        }
-        entries.retain(|f| self.is_walkable(f));
-        Ok(entries)
-    }
-
-    fn process_matcher(
-        &self,
-        work_dir: &FileInfo,
-        matcher: &Matcher,
-        entries: Vec<FileInfo>,
-    ) -> Vec<FileInfo> {
-        if matcher.any_entry_match(&entries) {
-            match &matcher.clean_strategy {
-                CleanStrategy::Remove(pattern) => {
-                    let (mut to_remove, remaining) = pattern.find_files_to_remove(entries);
-                    to_remove.retain(|p| !self.ignores.contains(&p.path));
-                    self.notify_removal_candidates(matcher, to_remove);
-                    remaining
-                }
-                CleanStrategy::RunCommand(cmd) => {
-                    let candidate = RemovalCandidate::new_cmd(
-                        matcher.name.clone(),
-                        work_dir.clone(),
-                        cmd.clone(),
-                    );
-                    self.notifier.notify_candidate_for_removal(candidate);
-                    entries
-                }
+        for rule in &self.rules {
+            if !rule.matches(&entries) {
+                continue;
             }
+
+            match rule.action() {
+                // The scan root is never proposed for deletion: running ocy from inside a
+                // venv must not offer to delete the directory being scanned.
+                CleanAction::RemoveSelf if depth > 0 => {
+                    self.emit_removal(rule, dir.clone());
+                    return Ok(DirOutcome::Reclaimed);
+                }
+                CleanAction::RemoveSelf => (),
+                CleanAction::Remove(targets) => {
+                    let claimed = self.claim_targets(rule, &entries, targets);
+                    entries.retain(|entry| !claimed.contains(&entry.path));
+                    self.pruned.borrow_mut().extend(claimed);
+                }
+                CleanAction::Run(command) => {
+                    self.notifier
+                        .notify_candidate_for_removal(RemovalCandidate::new_cmd(
+                            rule.name.clone(),
+                            dir.clone(),
+                            command.clone(),
+                        ));
+                }
+                CleanAction::RemoveStaleWorktrees => self.claim_stale_worktrees(rule, dir),
+            }
+        }
+
+        entries.retain(|entry| self.is_walkable(entry, depth));
+        Ok(DirOutcome::Descend(entries))
+    }
+
+    /// Report every target of a matched rule that actually exists.
+    ///
+    /// Returns the claimed paths so the caller can avoid descending into them.
+    fn claim_targets(
+        &self,
+        rule: &Rule,
+        entries: &[FileInfo],
+        targets: &[Target],
+    ) -> HashSet<PathBuf> {
+        targets
+            .iter()
+            .flat_map(|target| self.resolve_target(entries, target))
+            .filter(|found| !self.is_ignored(&found.path))
+            .map(|found| {
+                let path = found.path.clone();
+                self.emit_removal(rule, found);
+                path
+            })
+            .collect()
+    }
+
+    /// Walk a target's components one directory level at a time.
+    ///
+    /// The first component is matched against the already-listed entries, so the common
+    /// single-component target costs no extra syscall; only a nested target such as
+    /// `.angular/cache` reads further directories.
+    fn resolve_target(&self, entries: &[FileInfo], target: &Target) -> Vec<FileInfo> {
+        let Some((first, rest)) = target.components.split_first() else {
+            return Vec::new();
+        };
+
+        let mut found: Vec<FileInfo> = entries
+            .iter()
+            .filter(|entry| first.matches(&entry.name))
+            .cloned()
+            .collect();
+
+        for component in rest {
+            found = found
+                .iter()
+                .filter(|entry| entry.kind == SimpleFileKind::Directory)
+                .filter_map(|dir| self.fs.list_files(dir).ok())
+                .flat_map(|listing| listing.entries)
+                .filter(|entry| component.matches(&entry.name))
+                .collect();
+        }
+
+        found.retain(|entry| target.kind.is_none_or(|kind| kind == entry.kind));
+        found
+    }
+
+    /// Report the records of worktrees whose checkout is gone.
+    ///
+    /// This reads the records directly rather than through [`FileSystem`], because
+    /// deciding staleness means following a `gitdir` pointer out of the tree being
+    /// walked. The logic is covered by the tests in [`crate::git`].
+    fn claim_stale_worktrees(&self, rule: &Rule, dir: &FileInfo) {
+        crate::git::stale_worktree_records(&dir.path.join(".git"))
+            .into_iter()
+            .filter(|record| !self.is_ignored(record))
+            .for_each(|record| {
+                let name = record
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.emit_removal(rule, FileInfo::new(record, name, SimpleFileKind::Directory));
+            });
+    }
+
+    fn emit_removal(&self, rule: &Rule, file: FileInfo) {
+        let size = self.fs.file_size(&file).ok();
+        self.notifier
+            .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
+    }
+
+    fn is_ignored(&self, path: &Path) -> bool {
+        self.options.ignores.contains(path)
+    }
+
+    fn is_walkable(&self, file: &FileInfo, depth: usize) -> bool {
+        file.kind == SimpleFileKind::Directory
+            && self.within_depth(depth)
+            && self.is_scannable_name(&file.name)
+            && self.stays_on_one_filesystem(file)
+    }
+
+    fn within_depth(&self, depth: usize) -> bool {
+        self.options
+            .max_depth
+            .is_none_or(|max_depth| depth < max_depth)
+    }
+
+    fn is_scannable_name(&self, name: &str) -> bool {
+        if VCS_DIRS.contains(&name) {
+            false
+        } else if name.starts_with('.') {
+            self.options.walk_all || self.options.scanned_hidden.contains(name)
         } else {
-            entries
+            true
         }
     }
 
-    fn notify_removal_candidates(&self, matcher: &Matcher, to_remove: Vec<FileInfo>) {
-        to_remove
-            .into_iter()
-            .map(|f| self.removal_candidate(matcher, f))
-            .for_each(|c| self.notifier.notify_candidate_for_removal(c));
-    }
-
-    fn removal_candidate(&self, matcher: &Matcher, file: FileInfo) -> RemovalCandidate {
-        let size = self.fs.file_size(&file).ok();
-        RemovalCandidate::new(matcher.name.clone(), file, size)
-    }
-
-    fn is_walkable(&self, file: &FileInfo) -> bool {
-        file.kind == SimpleFileKind::Directory && (self.walk_all || !file.name.starts_with('.'))
+    fn stays_on_one_filesystem(&self, file: &FileInfo) -> bool {
+        match (self.options.one_file_system, *self.root_device.borrow()) {
+            (true, Some(root)) => self.fs.device_id(file).is_none_or(|device| device == root),
+            _ => true,
+        }
     }
 }
 

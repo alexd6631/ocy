@@ -1,19 +1,19 @@
-mod matchers;
 mod notifiers;
 mod options;
+mod rules;
 mod utils;
 
 use colored::Colorize;
 use eyre::{Context, Result};
 use gumdrop::Options;
-use matchers::{standard_matchers, widest_name};
 use ocy_core::command::RealCommandExecutor;
-use std::{collections::HashSet, path::PathBuf, process::ExitCode};
-
 use ocy_core::filesystem::{FileSystem, RealFileSystem};
 use ocy_core::models::FileInfo;
-use ocy_core::walker::Walker;
+use ocy_core::rule::widest_name;
+use ocy_core::walker::{WalkOptions, Walker};
 use ocy_core::{cleaner::Cleaner, models::RemovalCandidate};
+use rules::{SCANNED_HIDDEN_DIRS, standard_rules};
+use std::process::ExitCode;
 
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
 use options::OcyOptions;
@@ -32,18 +32,27 @@ fn main() -> Result<ExitCode> {
 }
 
 fn run(options: &OcyOptions) -> Result<ExitCode> {
-    let ignores = options.ignores_set()?;
-
     let current_directory = RealFileSystem
         .current_directory()
         .wrap_err("Cannot scan current directory")?;
 
-    let files = perform_walk(
-        &current_directory,
-        ignores,
-        options.walk_all,
-        options.allow_commands,
-    );
+    let walk_options = WalkOptions {
+        ignores: options.ignores_set()?,
+        walk_all: options.walk_all,
+        scanned_hidden: SCANNED_HIDDEN_DIRS
+            .iter()
+            .map(|d| (*d).to_string())
+            .collect(),
+        max_depth: options.max_depth,
+        one_file_system: options.one_file_system,
+    };
+
+    if walk_options.one_file_system && RealFileSystem.device_id(&current_directory).is_none() {
+        // Better to refuse than to let a safety flag silently do nothing.
+        eyre::bail!("--one-file-system is not supported on this platform");
+    }
+
+    let files = perform_walk(&current_directory, walk_options, options.allow_commands)?;
 
     // An empty scan is a successful scan: there was simply nothing to reclaim.
     if files.is_empty() {
@@ -56,36 +65,29 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
 
         if options.dry_run {
             println!("Would reclaim {} (dry run)", total.cyan());
-            Ok(ExitCode::SUCCESS)
-        } else {
-            if prompt(&format!("Reclaim {} (y/N) ? ", total.cyan()))? {
-                perform_clean(&current_directory, files);
-            }
-            Ok(ExitCode::SUCCESS)
+        } else if prompt(&format!("Reclaim {} (y/N) ? ", total.cyan()))? {
+            perform_clean(&current_directory, files);
         }
+        Ok(ExitCode::SUCCESS)
     }
 }
 
 fn perform_walk(
     current_directory: &FileInfo,
-    ignores: HashSet<PathBuf>,
-    walk_all: bool,
+    walk_options: WalkOptions,
     allow_commands: bool,
-) -> Vec<RemovalCandidate> {
-    let fs = RealFileSystem;
-    let matchers = standard_matchers(allow_commands);
-    let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&matchers));
-    let walker = Walker::new(fs, matchers, &notifier, ignores, walk_all);
+) -> Result<Vec<RemovalCandidate>> {
+    let rules = standard_rules(allow_commands)?;
+    let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&rules));
+    let walker = Walker::new(RealFileSystem, rules, &notifier, walk_options);
 
     walker.walk_from_path(current_directory);
-    notifier.to_remove.into_inner()
+    Ok(notifier.to_remove.into_inner())
 }
 
 fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>) {
-    let fs = RealFileSystem;
-    let ce = RealCommandExecutor;
     let notifier = LoggingCleanerNotifier::new(&current_directory.path, files.len());
-    let cleaner = Cleaner::new(files, fs, ce, &notifier);
+    let cleaner = Cleaner::new(files, RealFileSystem, RealCommandExecutor, &notifier);
     cleaner.clean();
 }
 

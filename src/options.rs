@@ -29,6 +29,19 @@ pub struct OcyOptions {
         help = "allow rules that run a project's own clean command (e.g. `make clean`)"
     )]
     pub allow_commands: bool,
+
+    #[options(
+        long = "max-depth",
+        help = "do not descend deeper than this many levels"
+    )]
+    pub max_depth: Option<usize>,
+
+    #[options(
+        short = "x",
+        long = "one-file-system",
+        help = "do not cross onto another filesystem"
+    )]
+    pub one_file_system: bool,
 }
 
 impl OcyOptions {

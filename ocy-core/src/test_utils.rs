@@ -5,59 +5,55 @@ use eyre::ContextCompat;
 use crate::filesystem::{DirListing, FileSystem};
 use crate::models::{FileInfo, SimpleFileKind};
 
-pub struct MockFS {
-    root: MockFSNode,
+pub struct MockFs {
+    root: MockFsNode,
 }
 
-impl MockFS {
-    pub fn new(root: MockFSNode) -> Self {
+impl MockFs {
+    pub fn new(root: MockFsNode) -> Self {
         Self { root }
     }
 }
 
-pub struct MockFSNode {
+pub struct MockFsNode {
     name: OsString,
-    children: Vec<MockFSNode>,
+    /// Held explicitly rather than inferred from `children`, so that an empty directory
+    /// is still a directory. Rules that require a target to be a directory depend on it.
+    kind: SimpleFileKind,
+    children: Vec<MockFsNode>,
 }
 
-impl MockFSNode {
-    fn file_kind(&self) -> SimpleFileKind {
-        if self.children.is_empty() {
-            SimpleFileKind::File
-        } else {
-            SimpleFileKind::Directory
-        }
-    }
-
+impl MockFsNode {
     fn to_file_info(&self, parent: &Path) -> FileInfo {
         let mut new_path = parent.to_path_buf();
         new_path.push(&self.name);
-        FileInfo::new(
-            new_path,
-            self.name.to_string_lossy().to_string(),
-            self.file_kind(),
-        )
+        FileInfo::new(new_path, self.name.to_string_lossy().to_string(), self.kind)
     }
-}
 
-impl MockFSNode {
     pub fn file(name: &str) -> Self {
-        MockFSNode {
+        MockFsNode {
             name: name.into(),
+            kind: SimpleFileKind::File,
             children: Vec::new(),
         }
     }
 
-    pub fn dir(name: &str, children: Vec<MockFSNode>) -> Self {
-        MockFSNode {
+    pub fn dir(name: &str, children: Vec<MockFsNode>) -> Self {
+        MockFsNode {
             name: name.into(),
+            kind: SimpleFileKind::Directory,
             children,
         }
     }
+
+    /// A directory with no entries, such as a build output directory in a fixture.
+    pub fn empty_dir(name: &str) -> Self {
+        Self::dir(name, Vec::new())
+    }
 }
 
-impl MockFS {
-    fn node(&self, path: &Path) -> Option<&MockFSNode> {
+impl MockFs {
+    fn node(&self, path: &Path) -> Option<&MockFsNode> {
         let mut current = &self.root;
 
         for c in path.iter().skip(1) {
@@ -67,7 +63,7 @@ impl MockFS {
     }
 }
 
-impl FileSystem for MockFS {
+impl FileSystem for MockFs {
     fn current_directory(&self) -> eyre::Result<FileInfo> {
         Ok(FileInfo::new(
             "/home/user".into(),

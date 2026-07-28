@@ -23,6 +23,14 @@ pub trait FileSystem {
     fn list_files(&self, file: &FileInfo) -> Result<DirListing>;
 
     fn file_size(&self, file: &FileInfo) -> Result<u64>;
+
+    /// The filesystem this entry lives on, where that is knowable.
+    ///
+    /// [`None`] means the question cannot be answered, which callers treat as "do not
+    /// restrict" rather than as a mount-point crossing.
+    fn device_id(&self, _file: &FileInfo) -> Option<u64> {
+        None
+    }
 }
 
 pub trait FileSystemClean {
@@ -59,6 +67,12 @@ impl FileSystem for RealFileSystem {
 
     fn file_size(&self, file: &FileInfo) -> Result<u64> {
         RealFileSystem::reclaimable_size(&file.path)
+    }
+
+    #[cfg(unix)]
+    fn device_id(&self, file: &FileInfo) -> Option<u64> {
+        use std::os::unix::fs::MetadataExt;
+        fs::symlink_metadata(&file.path).ok().map(|m| m.dev())
     }
 }
 
@@ -150,9 +164,36 @@ impl FileSystemClean for RealFileSystem {
         match file.kind {
             SimpleFileKind::Directory => fs::remove_dir_all(&file.path)
                 .with_context(|| format!("cannot remove directory {}", file.path.display())),
-            SimpleFileKind::File | SimpleFileKind::Symlink => fs::remove_file(&file.path)
+            SimpleFileKind::File => fs::remove_file(&file.path)
                 .with_context(|| format!("cannot remove {}", file.path.display())),
+            SimpleFileKind::Symlink => remove_symlink(&file.path)
+                .with_context(|| format!("cannot remove link {}", file.path.display())),
         }
+    }
+}
+
+/// Remove a symbolic link itself, never its target.
+#[cfg(not(windows))]
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    fs::remove_file(path)
+}
+
+/// Remove a symbolic link itself, never its target.
+///
+/// Windows needs the directory form of the call for a link that points at a directory --
+/// `DeleteFile` fails on one, and `RemoveDirectory` fails on the file form. Both symlinks
+/// and junctions carry `FILE_ATTRIBUTE_DIRECTORY` when they name a directory, so the
+/// attribute decides which call to make. This never recurses, so the target is untouched.
+#[cfg(windows)]
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+
+    if fs::symlink_metadata(path)?.file_attributes() & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        fs::remove_file(path)
+    } else {
+        fs::remove_dir(path)
     }
 }
 
