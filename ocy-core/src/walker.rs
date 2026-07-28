@@ -48,6 +48,11 @@ pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     /// Paths already claimed by a rule, so nested candidates are not walked or re-reported.
     pruned: RefCell<HashSet<PathBuf>>,
     root_device: RefCell<Option<u64>>,
+    /// Directories already walked, so a worktree reached both by descent and by its git
+    /// record is scanned once and counted once.
+    visited: RefCell<HashSet<PathBuf>>,
+    /// Checkouts of linked worktrees found during the walk, scanned once it finishes.
+    pending_worktrees: RefCell<Vec<FileInfo>>,
     directories_scanned: Cell<usize>,
     candidates_found: Cell<usize>,
 }
@@ -76,6 +81,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             options,
             pruned: RefCell::default(),
             root_device: RefCell::default(),
+            visited: RefCell::default(),
+            pending_worktrees: RefCell::default(),
             directories_scanned: Cell::default(),
             candidates_found: Cell::default(),
         }
@@ -92,6 +99,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             self.rules.len()
         );
         self.process_dir(path, 0);
+        self.process_pending_worktrees(&path.path);
         log::info!(
             "scanned {} directories, found {} candidates",
             self.directories_scanned.get(),
@@ -101,8 +109,38 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         self.notifier.notify_walk_finish();
     }
 
+    /// Walk the linked worktrees discovered during the main walk.
+    ///
+    /// Deferred rather than recursed into on the spot, so that a worktree nested inside
+    /// the tree is reached by ordinary descent first and skipped here as already visited.
+    /// Only checkouts below `root` are followed: `ocy` was asked to clean one directory,
+    /// and a worktree parked in `/tmp` is outside what was asked for.
+    fn process_pending_worktrees(&self, root: &Path) {
+        loop {
+            // Popped in its own statement: as the scrutinee of a `while let`, the borrow
+            // would live for the whole body, and walking a worktree can queue more.
+            let next = self.pending_worktrees.borrow_mut().pop();
+            let Some(worktree) = next else {
+                break;
+            };
+
+            if worktree.path.starts_with(root) {
+                log::debug!("following linked worktree {}", worktree.path.display());
+                self.process_dir(&worktree, 0);
+            } else {
+                log::debug!(
+                    "skipping worktree outside the scan root: {}",
+                    worktree.path.display()
+                );
+            }
+        }
+    }
+
     fn process_dir(&self, file: &FileInfo, depth: usize) {
         if self.is_ignored(&file.path) || self.pruned.borrow().contains(&file.path) {
+            return;
+        }
+        if !self.visited.borrow_mut().insert(file.path.clone()) {
             return;
         }
 
@@ -153,7 +191,10 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                             command.clone(),
                         ));
                 }
-                CleanAction::RemoveStaleWorktrees => self.claim_stale_worktrees(rule, dir),
+                CleanAction::RemoveStaleWorktrees => {
+                    self.claim_stale_worktrees(rule, dir);
+                    self.queue_linked_worktrees(dir);
+                }
             }
         }
 
@@ -230,6 +271,24 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                     .unwrap_or_default();
                 self.emit_removal(rule, FileInfo::new(record, name, SimpleFileKind::Directory));
             });
+    }
+
+    /// Note the checkouts of this repository's linked worktrees for later walking.
+    ///
+    /// A worktree is a working copy with its own build output, and it is routinely parked
+    /// under a hidden directory that the walk would otherwise never enter.
+    fn queue_linked_worktrees(&self, dir: &FileInfo) {
+        let found = crate::git::linked_worktree_paths(&dir.path.join(".git"));
+
+        self.pending_worktrees
+            .borrow_mut()
+            .extend(found.into_iter().map(|path| {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                FileInfo::new(path, name, SimpleFileKind::Directory)
+            }));
     }
 
     fn emit_removal(&self, rule: &Rule, file: FileInfo) {

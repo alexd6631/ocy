@@ -109,13 +109,34 @@ Colour is dropped automatically when output is not a terminal, and `NO_COLOR` is
 honoured. The tints are 24-bit; a terminal without truecolor ignores them and
 prints the column plain.
 
+### Git worktrees
+
+A linked worktree is a full working copy with its own build output, and where it
+lives is purely local convention -- `.worktrees/`, `.claude/worktrees/`, a
+sibling directory. Most of those are hidden, so guessing the name means missing
+whichever convention was not guessed.
+
+`ocy` does not guess. On reaching a repository it reads `.git/worktrees/*/gitdir`
+and follows each record to its checkout, wherever that is and whatever it is
+called. A worktree reached both by ordinary descent and by its record is scanned
+once, so its bytes are not counted twice.
+
+Only checkouts *below the directory being scanned* are followed. A worktree
+parked in `/tmp` is outside what you asked `ocy` to clean, so it is skipped and
+logged rather than reclaimed.
+
 ### Hidden directories
 
 Build output routinely hides behind a leading dot, so a hidden directory that is
-itself a target — `.next`, `.gradle`, `.terraform` — is always reclaimed. The
-walk additionally descends into `.venv` and `.worktrees`, which *contain* things
-worth finding. Use `--all` to descend into every hidden directory. Version
-control metadata (`.git`, `.svn`, `.hg`, `.jj`, `.bzr`) is never descended into.
+itself a target — `.next`, `.gradle`, `.terraform` — is always reclaimed, and a
+nested target such as `.angular/cache` is resolved directly. The walk descends
+into `.venv`, which is self-marked and has to be looked inside, and into linked
+worktrees found as above. Use `--all` to descend into every hidden directory.
+Version control metadata (`.git`, `.svn`, `.hg`, `.jj`, `.bzr`) is never
+descended into.
+
+If something you expected is missing, `ocy -vv` names every directory it skipped
+and why.
 
 ## Usage
 

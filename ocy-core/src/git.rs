@@ -32,6 +32,35 @@ pub fn stale_worktree_records(git_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Checkout directories of linked worktrees that still exist.
+///
+/// Where a worktree lives is a matter of local convention -- `.worktrees/`, `.claude/`,
+/// a sibling directory -- and any of those may be hidden. Guessing the directory name
+/// means missing whichever convention was not guessed, so the records are read instead.
+/// Each record's [`GITDIR_POINTER`] names the `.git` file inside the checkout, whose
+/// parent is the checkout itself.
+pub fn linked_worktree_paths(git_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(git_dir.join(WORKTREES_DIR)) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| checkout_path(&entry.path()))
+        .collect()
+}
+
+fn checkout_path(record: &Path) -> Option<PathBuf> {
+    let pointer = fs::read_to_string(record.join(GITDIR_POINTER)).ok()?;
+    let git_file = Path::new(pointer.trim());
+
+    if git_file.exists() {
+        git_file.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
 fn is_stale(record: &Path) -> bool {
     if record.join(LOCK_MARKER).exists() {
         false

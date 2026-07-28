@@ -6,10 +6,13 @@ use ocy_core::rule::{Rule, RuleError};
 /// directory that is itself a target -- `.next`, `.gradle`, `.terraform` -- is claimed by
 /// its own rule without ever being descended into, and a nested target such as
 /// `.angular/cache` is resolved directly rather than walked.
+/// Registered git worktrees do not need listing here whatever they are called: the walk
+/// follows each repository's own records to its checkouts. This list is only for hidden
+/// directories that nothing else can lead the walk to.
 pub const SCANNED_HIDDEN_DIRS: &[&str] = &[
     // Python virtual environments are self-marked, so the walk has to look inside.
     ".venv",
-    // The conventional home for in-repo git worktrees, each a project in its own right.
+    // Checkouts parked here by hand, which have no git record to follow.
     ".worktrees",
 ];
 

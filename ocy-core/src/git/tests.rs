@@ -65,3 +65,28 @@ fn a_repository_without_worktrees_yields_nothing() -> eyre::Result<()> {
     assert!(stale_worktree_records(&temp.path().join(".git")).is_empty());
     Ok(())
 }
+
+#[test]
+fn finds_the_checkout_of_a_live_worktree() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let checkout = temp.path().join("hidden").join("wt").join("feature");
+    fs::create_dir_all(&checkout)?;
+    fs::write(checkout.join(".git"), "gitdir: elsewhere")?;
+    let git_dir = git_dir_with_record(temp.path(), "feature", &checkout.join(".git"));
+
+    let found = super::linked_worktree_paths(&git_dir);
+
+    assert_eq!(1, found.len(), "got {found:?}");
+    assert!(found[0].ends_with("hidden/wt/feature"), "got {found:?}");
+    Ok(())
+}
+
+/// A record whose checkout is gone yields no path to scan; it is pruning material.
+#[test]
+fn a_stale_record_yields_no_checkout() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let git_dir = git_dir_with_record(temp.path(), "gone", &temp.path().join("gone/.git"));
+
+    assert!(super::linked_worktree_paths(&git_dir).is_empty());
+    Ok(())
+}

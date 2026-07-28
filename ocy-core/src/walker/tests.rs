@@ -331,3 +331,107 @@ fn never_claims_a_path_inside_another_candidate() -> eyre::Result<()> {
     assert_eq!(vec!["/home/user/app/.angular/cache"], found);
     Ok(())
 }
+
+/// Walk a real temporary tree, rather than [`MockFs`], and return the reclaimed paths
+/// relative to the root.
+fn reclaimed_on_disk(
+    root: &std::path::Path,
+    rules: Vec<Rule>,
+    options: WalkOptions,
+) -> Vec<String> {
+    use crate::filesystem::RealFileSystem;
+    use crate::models::SimpleFileKind;
+
+    let start = FileInfo::new(root.to_path_buf(), String::new(), SimpleFileKind::Directory);
+    let notifier = VecWalkNotifier::default();
+    let walker = Walker::new(RealFileSystem, rules, &notifier, options);
+
+    walker.walk_from_path(&start);
+
+    let mut paths: Vec<String> = notifier
+        .to_remove
+        .into_inner()
+        .into_iter()
+        .filter_map(|candidate| match candidate.action {
+            RemovalAction::Delete { file_info, .. } => Some(
+                file_info
+                    .path
+                    .strip_prefix(root)
+                    .unwrap_or(&file_info.path)
+                    .display()
+                    .to_string(),
+            ),
+            RemovalAction::RunCommand { .. } => None,
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Build a repository whose linked worktree sits under a hidden directory that is not
+/// allow-listed, so only the git record can lead the walk to it.
+fn repo_with_hidden_worktree(root: &std::path::Path) -> std::io::Result<()> {
+    let repo = root.join("repo");
+    let worktree = repo.join(".claude").join("worktrees").join("feat");
+    std::fs::create_dir_all(repo.join("target"))?;
+    std::fs::create_dir_all(worktree.join("target"))?;
+    std::fs::write(repo.join("Cargo.toml"), "")?;
+    std::fs::write(worktree.join("Cargo.toml"), "")?;
+    std::fs::write(worktree.join(".git"), "gitdir: elsewhere\n")?;
+
+    let record = repo.join(".git").join("worktrees").join("feat");
+    std::fs::create_dir_all(&record)?;
+    std::fs::write(
+        record.join("gitdir"),
+        format!("{}\n", worktree.join(".git").display()),
+    )
+}
+
+/// Where a worktree lives is local convention, and it is routinely hidden. The walk has
+/// to reach it via the git record rather than by guessing the directory name.
+#[test]
+fn follows_a_linked_worktree_into_an_unlisted_hidden_directory() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    repo_with_hidden_worktree(temp.path())?;
+
+    let rules = vec![
+        Rule::remove("Cargo", &["Cargo.toml"], &["target"])?,
+        Rule::prune_stale_worktrees("Git worktree", &[".git"])?,
+    ];
+    let found = reclaimed_on_disk(temp.path(), rules, WalkOptions::default());
+
+    assert_eq!(
+        vec!["repo/.claude/worktrees/feat/target", "repo/target"],
+        found
+    );
+    Ok(())
+}
+
+/// A worktree reachable both by descent and by its git record must be reported once, or
+/// its bytes are counted twice in the total.
+#[test]
+fn a_visible_worktree_is_not_scanned_twice() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    let worktree = repo.join("visible");
+    std::fs::create_dir_all(worktree.join("target"))?;
+    std::fs::write(repo.join("Cargo.toml"), "")?;
+    std::fs::write(worktree.join("Cargo.toml"), "")?;
+    std::fs::write(worktree.join(".git"), "gitdir: elsewhere\n")?;
+
+    let record = repo.join(".git").join("worktrees").join("visible");
+    std::fs::create_dir_all(&record)?;
+    std::fs::write(
+        record.join("gitdir"),
+        format!("{}\n", worktree.join(".git").display()),
+    )?;
+
+    let rules = vec![
+        Rule::remove("Cargo", &["Cargo.toml"], &["target"])?,
+        Rule::prune_stale_worktrees("Git worktree", &[".git"])?,
+    ];
+    let found = reclaimed_on_disk(temp.path(), rules, WalkOptions::default());
+
+    assert_eq!(vec!["repo/visible/target"], found);
+    Ok(())
+}
