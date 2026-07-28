@@ -1,4 +1,4 @@
-use crate::utils::{format_opt_file_size, format_path, format_path_truncate};
+use crate::utils::{SIZE_COLUMN_WIDTH, format_opt_file_size, format_path, format_path_truncate};
 use colored::Colorize;
 use eyre::Report;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -76,16 +76,23 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
 #[derive(Debug)]
 pub struct VecWalkNotifier<'a> {
     base_path: &'a Path,
+    /// Width of the rule-name column, taken from the widest name in the active rule set.
+    ///
+    /// Candidates stream out as they are found, so the width cannot be derived from the
+    /// results; deriving it from the rules keeps the columns aligned regardless of which
+    /// rules happen to fire. This is issue #3.
+    name_width: usize,
     pub progress_bar: ProgressBar,
     pub to_remove: RefCell<Vec<RemovalCandidate>>,
 }
 
 impl<'a> VecWalkNotifier<'a> {
-    pub fn new(base_path: &'a Path) -> Self {
+    pub fn new(base_path: &'a Path, name_width: usize) -> Self {
         let progress_bar = ProgressBar::new_spinner();
         progress_bar.enable_steady_tick(Duration::from_millis(50));
         Self {
             base_path,
+            name_width,
             progress_bar,
             to_remove: RefCell::default(),
         }
@@ -101,10 +108,23 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
     }
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
+        // Pad before colouring: the escape sequences are not printable width, so padding
+        // a already-coloured string is the classic way to get ragged columns.
+        let name = format!(
+            "{:>width$}",
+            candidate.matcher_name,
+            width = self.name_width
+        );
+        let size = format!(
+            "{:>width$}",
+            format_opt_file_size(candidate.file_size()),
+            width = SIZE_COLUMN_WIDTH
+        );
+
         self.progress_bar.println(format!(
-            "{:>9} {:>9} {}",
-            candidate.matcher_name.green(),
-            format_opt_file_size(candidate.file_size()).cyan(),
+            "{} {} {}",
+            name.green(),
+            size.cyan(),
             format_candidate(self.base_path, &candidate),
         ));
 

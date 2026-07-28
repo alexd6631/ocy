@@ -6,9 +6,9 @@ mod utils;
 use colored::Colorize;
 use eyre::{Context, Result};
 use gumdrop::Options;
-use matchers::standard_matchers;
+use matchers::{standard_matchers, widest_name};
 use ocy_core::command::RealCommandExecutor;
-use std::{collections::HashSet, path::PathBuf, process::exit};
+use std::{collections::HashSet, path::PathBuf, process::ExitCode};
 
 use ocy_core::filesystem::{FileSystem, RealFileSystem};
 use ocy_core::models::FileInfo;
@@ -19,48 +19,62 @@ use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
 use options::OcyOptions;
 use utils::{format_file_size_and_more, prompt};
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let options = OcyOptions::parse_args_default_or_exit();
 
     print_banner();
 
     if options.version {
-        exit(0);
+        Ok(ExitCode::SUCCESS)
+    } else {
+        run(&options)
     }
+}
 
-    let ignores = options.get_ignores_set();
+fn run(options: &OcyOptions) -> Result<ExitCode> {
+    let ignores = options.ignores_set()?;
 
     let current_directory = RealFileSystem
         .current_directory()
         .wrap_err("Cannot scan current directory")?;
 
-    let files = perform_walk(&current_directory, ignores, options.walk_all);
+    let files = perform_walk(
+        &current_directory,
+        ignores,
+        options.walk_all,
+        options.allow_commands,
+    );
+
+    // An empty scan is a successful scan: there was simply nothing to reclaim.
     if files.is_empty() {
         println!("No projects found");
-        exit(1);
+        Ok(ExitCode::SUCCESS)
+    } else {
+        println!();
+        let (total_size, has_more) = total_size(&files);
+        let total = format_file_size_and_more(total_size, has_more);
+
+        if options.dry_run {
+            println!("Would reclaim {} (dry run)", total.cyan());
+            Ok(ExitCode::SUCCESS)
+        } else {
+            if prompt(&format!("Reclaim {} (y/N) ? ", total.cyan()))? {
+                perform_clean(&current_directory, files);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
-    println!();
-
-    let (total_size, has_more) = total_size(&files);
-
-    if prompt(&format!(
-        "Reclaim {} (y/N) ? ",
-        format_file_size_and_more(total_size, has_more).cyan(),
-    )) {
-        perform_clean(&current_directory, files);
-    }
-
-    Ok(())
 }
 
 fn perform_walk(
     current_directory: &FileInfo,
     ignores: HashSet<PathBuf>,
     walk_all: bool,
+    allow_commands: bool,
 ) -> Vec<RemovalCandidate> {
     let fs = RealFileSystem;
-    let matchers = standard_matchers();
-    let notifier = VecWalkNotifier::new(&current_directory.path);
+    let matchers = standard_matchers(allow_commands);
+    let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&matchers));
     let walker = Walker::new(fs, matchers, &notifier, ignores, walk_all);
 
     walker.walk_from_path(current_directory);

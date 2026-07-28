@@ -1,13 +1,23 @@
 use std::{path::PathBuf, sync::Arc};
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimpleFileKind {
     File,
     Directory,
+    /// A symbolic link, never resolved to its target.
+    ///
+    /// Links are tracked separately from [`SimpleFileKind::Directory`] so that neither the
+    /// walk nor the size estimate ever leaves the tree being scanned.
+    Symlink,
 }
-#[derive(Debug, Clone)]
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FileInfo {
     pub path: PathBuf,
+    /// The entry name, lossily decoded.
+    ///
+    /// Names that are not valid UTF-8 still produce a usable [`FileInfo`]; `path` remains
+    /// the authoritative value for any filesystem operation.
     pub name: String,
     pub kind: SimpleFileKind,
 }

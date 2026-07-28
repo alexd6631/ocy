@@ -2,7 +2,7 @@ use std::{ffi::OsString, path::Path};
 
 use eyre::ContextCompat;
 
-use crate::filesystem::FileSystem;
+use crate::filesystem::{DirListing, FileSystem};
 use crate::models::{FileInfo, SimpleFileKind};
 
 pub struct MockFS {
@@ -57,7 +57,7 @@ impl MockFSNode {
 }
 
 impl MockFS {
-    fn get_node(&self, path: &Path) -> Option<&MockFSNode> {
+    fn node(&self, path: &Path) -> Option<&MockFSNode> {
         let mut current = &self.root;
 
         for c in path.iter().skip(1) {
@@ -76,15 +76,18 @@ impl FileSystem for MockFS {
         ))
     }
 
-    fn list_files(&self, file: &FileInfo) -> eyre::Result<Vec<FileInfo>> {
+    fn list_files(&self, file: &FileInfo) -> eyre::Result<DirListing> {
         let path = &file.path;
-        let node = self.get_node(path).wrap_err("Cannot find node")?;
-        let files = node
+        let node = self.node(path).wrap_err("Cannot find node")?;
+        let entries = node
             .children
             .iter()
             .map(|node| node.to_file_info(path))
             .collect();
-        Ok(files)
+        Ok(DirListing {
+            entries,
+            errors: Vec::new(),
+        })
     }
 
     fn file_size(&self, _file: &FileInfo) -> eyre::Result<u64> {

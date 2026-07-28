@@ -21,17 +21,37 @@ macro_rules! matcher_cmd {
     };
 }
 
-pub fn standard_matchers() -> Vec<Matcher> {
-    vec![
+/// The built-in rule set.
+///
+/// Command rules are gated behind `allow_commands`. A rule such as `make clean` runs a
+/// script that the scanned directory controls, so enabling it for an ordinary scan would
+/// execute arbitrary code from any tree that happens to contain a `Makefile`.
+pub fn standard_matchers(allow_commands: bool) -> Vec<Matcher> {
+    let command_matchers = allow_commands
+        .then(|| matcher_cmd!("Make", "Makefile", "make clean"))
+        .into_iter();
+
+    [
         matcher!("Cargo", "Cargo.toml", "target"),
         matcher!("Gradle", "build.gradle", "build"),
         matcher!("GradleKTS", "build.gradle.kts", "build"),
         matcher!("Maven", "pom.xml", "target"),
-        matcher!("NodeJS", "*", "node_modules"),
-        matcher!("XCode", "*", "DerivedData"),
+        matcher!("NodeJS", "package.json", "node_modules"),
+        matcher!("XCode", "*.xcodeproj", "DerivedData"),
         matcher!("SBT", "build.sbt", "target"),
         matcher!("SBT", "plugins.sbt", "target"),
         matcher!("Flutter/Dart", "pubspec.yaml", "build"),
-        matcher_cmd!("Make", "Makefile", "make clean"),
     ]
+    .into_iter()
+    .chain(command_matchers)
+    .collect()
+}
+
+/// The width of the widest rule name, for column alignment.
+pub fn widest_name(matchers: &[Matcher]) -> usize {
+    matchers
+        .iter()
+        .map(|m| m.name.chars().count())
+        .max()
+        .unwrap_or(0)
 }

@@ -2,7 +2,7 @@ use std::{process::Command, thread::sleep, time::Duration};
 
 use crate::models::FileInfo;
 
-use eyre::{Context, Result};
+use eyre::{Context, Result, eyre};
 
 pub trait CommandExecutor {
     fn execute_command(&self, work_dir: &FileInfo, command: &str) -> Result<()>;
@@ -21,14 +21,24 @@ pub struct RealCommandExecutor;
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute_command(&self, work_dir: &FileInfo, command: &str) -> Result<()> {
-        let mut iter = command.split_ascii_whitespace();
-        let cmd = iter.next().unwrap();
+        let mut parts = command.split_ascii_whitespace();
+        let program = parts
+            .next()
+            .ok_or_else(|| eyre!("refusing to run an empty command"))?;
 
-        Command::new(cmd)
+        let status = Command::new(program)
             .current_dir(&work_dir.path)
-            .args(iter)
+            .args(parts)
             .status()
-            .context("Failed to execute command")?;
-        Ok(())
+            .with_context(|| format!("failed to spawn `{command}`"))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(eyre!("`{command}` failed: {status}"))
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

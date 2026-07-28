@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::PathBuf};
 
+use eyre::{Context, Result};
 use gumdrop::Options;
 
 #[derive(Debug, Options)]
@@ -15,13 +16,33 @@ pub struct OcyOptions {
 
     #[options(short = "a", long = "all", help = "walk into hidden dirs")]
     pub walk_all: bool,
+
+    #[options(
+        short = "n",
+        long = "dry-run",
+        help = "report what would be reclaimed, then exit without deleting"
+    )]
+    pub dry_run: bool,
+
+    #[options(
+        long = "allow-commands",
+        help = "allow rules that run a project's own clean command (e.g. `make clean`)"
+    )]
+    pub allow_commands: bool,
 }
 
 impl OcyOptions {
-    pub fn get_ignores_set(&self) -> HashSet<PathBuf> {
+    /// The ignore paths, canonicalised.
+    ///
+    /// A path that cannot be resolved is an error rather than a panic: mistyping
+    /// `--ignores` is ordinary user error, not a bug.
+    pub fn ignores_set(&self) -> Result<HashSet<PathBuf>> {
         self.ignores
             .iter()
-            .map(|p| p.canonicalize().unwrap())
-            .collect::<HashSet<_>>()
+            .map(|p| {
+                p.canonicalize()
+                    .with_context(|| format!("cannot resolve ignored path {}", p.display()))
+            })
+            .collect()
     }
 }
