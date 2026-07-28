@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashSet, path::Path, path::PathBuf};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     filesystem::FileSystem,
@@ -44,6 +48,8 @@ pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     /// Paths already claimed by a rule, so nested candidates are not walked or re-reported.
     pruned: RefCell<HashSet<PathBuf>>,
     root_device: RefCell<Option<u64>>,
+    directories_scanned: Cell<usize>,
+    candidates_found: Cell<usize>,
 }
 
 pub trait WalkNotifier {
@@ -70,6 +76,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             options,
             pruned: RefCell::default(),
             root_device: RefCell::default(),
+            directories_scanned: Cell::default(),
+            candidates_found: Cell::default(),
         }
     }
 
@@ -77,7 +85,19 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         if self.options.one_file_system {
             *self.root_device.borrow_mut() = self.fs.device_id(path);
         }
+
+        log::info!(
+            "scanning {} with {} rules",
+            path.path.display(),
+            self.rules.len()
+        );
         self.process_dir(path, 0);
+        log::info!(
+            "scanned {} directories, found {} candidates",
+            self.directories_scanned.get(),
+            self.candidates_found.get()
+        );
+
         self.notifier.notify_walk_finish();
     }
 
@@ -97,6 +117,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn process_entries(&self, dir: &FileInfo, depth: usize) -> Result<DirOutcome> {
         self.notifier.notify_entered_directory(dir);
+        self.directories_scanned
+            .set(self.directories_scanned.get() + 1);
 
         let listing = self.fs.list_files(dir)?;
         listing
@@ -228,6 +250,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                 |size| format!("{size} bytes")
             )
         );
+        self.candidates_found.set(self.candidates_found.get() + 1);
         self.notifier
             .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
     }

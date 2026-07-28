@@ -112,8 +112,11 @@ Usage: ocy [OPTIONS]
 
 Optional arguments:
   -h, --help             print help message
-  -i, --ignore PATH[,PATH...]  ignore path(s), repeatable
-  -v, --version          print version
+  -i, --ignore PATH[,PATH...]
+                         ignore path(s), repeatable
+  -V, --version          print version
+  -v, --verbose          log more; repeat for debug and trace
+  -q, --quiet            suppress all logging
   -a, --all              walk into hidden dirs
   -n, --dry-run          report what would be reclaimed, then exit without deleting
   -A, --allow-commands   allow rules that run a project's own clean command (e.g. `make clean`)
@@ -137,16 +140,26 @@ resolves as itself.
 
 ## Diagnostics
 
-`ocy` is silent unless `RUST_LOG` asks for output, so the normal run stays clean:
+`ocy` is silent unless asked. Raise the level with `-v`, or set `RUST_LOG` when
+you want per-module filters:
 
 ```
-RUST_LOG=debug ocy --dry-run
+ocy -v          # a one-line scan summary
+ocy -vv         # which rule claimed each path, and why anything was skipped
+ocy -vvv        # every directory considered
+ocy -q          # silence even an exported RUST_LOG
+RUST_LOG=ocy_core::walker=debug ocy
 ```
 
-`debug` reports which rule claimed each path, why a hidden directory was skipped,
-and anything that could not be sized. `trace` adds every directory considered.
-Diagnostics go to stderr, where the progress bar also draws, so expect the two to
-interleave while debugging.
+An explicit flag always beats `RUST_LOG`, which is often exported once and
+forgotten; a `-v` that silently did nothing would be the worse surprise.
+
+Diagnostics go to stderr. Whenever logging is on the animated progress bar is
+switched off, so the two never fight over the same lines -- results are still
+printed, only the animation is dropped. The same applies when stderr is not a
+terminal, so `ocy | tee scan.log` keeps every result.
+
+Note that `-v` prints the version in `ocy` 0.1; from 0.2 that is `-V`.
 
 `ocy-core` logs through the `log` facade only, and does not pull in a logger --
 choosing one is left to whatever links it.

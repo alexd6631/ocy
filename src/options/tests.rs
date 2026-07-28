@@ -122,3 +122,36 @@ fn no_flag_yields_nothing() -> eyre::Result<()> {
 fn an_unresolvable_path_is_an_error_not_a_panic() {
     assert!(resolve_ignore("/does/not/exist/anywhere").is_err());
 }
+
+fn verbosity(verbose: u32, quiet: bool) -> Option<log::LevelFilter> {
+    OcyOptions {
+        verbose,
+        quiet,
+        ..Default::default()
+    }
+    .log_filter()
+}
+
+/// No flag defers to `RUST_LOG`, which is what `None` means here.
+#[test]
+fn no_verbosity_flag_defers_to_the_environment() {
+    assert_eq!(None, verbosity(0, false));
+}
+
+#[test]
+fn repeating_verbose_raises_the_level() {
+    assert_eq!(Some(log::LevelFilter::Info), verbosity(1, false));
+    assert_eq!(Some(log::LevelFilter::Debug), verbosity(2, false));
+    assert_eq!(Some(log::LevelFilter::Trace), verbosity(3, false));
+}
+
+#[test]
+fn further_repeats_stay_at_trace() {
+    assert_eq!(Some(log::LevelFilter::Trace), verbosity(9, false));
+}
+
+/// Quiet has to win, or it could not silence an exported `RUST_LOG`.
+#[test]
+fn quiet_overrides_verbose() {
+    assert_eq!(Some(log::LevelFilter::Off), verbosity(3, true));
+}

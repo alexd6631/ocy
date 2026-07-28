@@ -5,6 +5,7 @@ use std::{
 
 use eyre::{Context, Result};
 use gumdrop::Options;
+use log::LevelFilter;
 
 /// Separator accepted inside a single `--ignore` value.
 const IGNORE_SEPARATOR: char = ',';
@@ -24,8 +25,20 @@ pub struct OcyOptions {
     )]
     pub ignores: Vec<String>,
 
-    #[options(help = "print version")]
+    /// Short form is `-V`, leaving `-v` free for verbosity as most CLIs do.
+    #[options(short = "V", long = "version", help = "print version")]
     pub version: bool,
+
+    #[options(
+        short = "v",
+        long = "verbose",
+        count,
+        help = "log more; repeat for debug and trace"
+    )]
+    pub verbose: u32,
+
+    #[options(short = "q", long = "quiet", help = "suppress all logging")]
+    pub quiet: bool,
 
     #[options(short = "a", long = "all", help = "walk into hidden dirs")]
     pub walk_all: bool,
@@ -59,6 +72,24 @@ pub struct OcyOptions {
 }
 
 impl OcyOptions {
+    /// The log filter these options ask for, or [`None`] to defer to `RUST_LOG`.
+    ///
+    /// An explicit flag always wins over the environment. `RUST_LOG` is frequently
+    /// exported once and forgotten, and a `-v` that silently did nothing because of it
+    /// would be the more surprising outcome.
+    pub fn log_filter(&self) -> Option<LevelFilter> {
+        if self.quiet {
+            Some(LevelFilter::Off)
+        } else {
+            match self.verbose {
+                0 => None,
+                1 => Some(LevelFilter::Info),
+                2 => Some(LevelFilter::Debug),
+                _ => Some(LevelFilter::Trace),
+            }
+        }
+    }
+
     /// The ignore paths, canonicalised.
     ///
     /// A path that cannot be resolved is an error rather than a panic: mistyping

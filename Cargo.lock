@@ -365,6 +365,7 @@ dependencies = [
  "glob",
  "gumdrop",
  "indicatif",
+ "log",
  "ocy-core",
  "tempfile",
 ]

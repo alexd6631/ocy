@@ -7,17 +7,32 @@ use ocy_core::{
     models::{FileInfo, RemovalAction, RemovalCandidate},
     walker::WalkNotifier,
 };
-use std::{cell::RefCell, path::Path, time::Duration};
+use std::{cell::RefCell, io::IsTerminal, path::Path, time::Duration};
 
-pub struct LoggingCleanerNotifier<'a> {
-    base_path: &'a Path,
-    pub progress_bar: ProgressBar,
+/// Whether the animated progress display should be used at all.
+///
+/// An animated bar redraws in place on stderr. That is wrong in two situations: when
+/// logging is on, because the log lines land on the same stream and fight the redraw; and
+/// when stderr is not a terminal, because the control sequences are meaningless in a file.
+/// In both cases the results are still printed -- only the animation is dropped.
+pub fn progress_is_useful() -> bool {
+    std::io::stderr().is_terminal() && log::max_level() == log::LevelFilter::Off
 }
 
-impl<'a> LoggingCleanerNotifier<'a> {
-    pub fn new(base_path: &'a Path, size: usize) -> Self {
-        let progress_bar = ProgressBar::new(size as u64);
-        progress_bar.set_style(
+fn spinner(animated: bool) -> ProgressBar {
+    if animated {
+        let bar = ProgressBar::new_spinner();
+        bar.enable_steady_tick(Duration::from_millis(50));
+        bar
+    } else {
+        ProgressBar::hidden()
+    }
+}
+
+fn bar(animated: bool, size: usize) -> ProgressBar {
+    if animated {
+        let bar = ProgressBar::new(size as u64);
+        bar.set_style(
             ProgressStyle::default_bar()
                 // SAFETY: the template is a literal, so it either parses on every run or
                 // on none; a malformed one would fail the first test that renders a bar.
@@ -25,10 +40,32 @@ impl<'a> LoggingCleanerNotifier<'a> {
                 .unwrap()
                 .progress_chars("#>-"),
         );
-        progress_bar.enable_steady_tick(Duration::from_millis(50));
+        bar.enable_steady_tick(Duration::from_millis(50));
+        bar
+    } else {
+        ProgressBar::hidden()
+    }
+}
+
+/// Print a result line, stepping around the progress display if one is drawn.
+///
+/// [`ProgressBar::println`] emits nothing once the draw target is hidden, which would
+/// silently swallow every result whenever output is piped. `suspend` runs the closure
+/// either way, so results survive redirection.
+fn emit(progress_bar: &ProgressBar, line: String) {
+    progress_bar.suspend(|| println!("{line}"));
+}
+
+pub struct LoggingCleanerNotifier<'a> {
+    base_path: &'a Path,
+    pub progress_bar: ProgressBar,
+}
+
+impl<'a> LoggingCleanerNotifier<'a> {
+    pub fn new(base_path: &'a Path, size: usize, animated: bool) -> Self {
         Self {
             base_path,
-            progress_bar,
+            progress_bar: bar(animated, size),
         }
     }
 }
@@ -44,7 +81,8 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
 
     fn notify_removal_success(&self, candidate: RemovalCandidate) {
         self.progress_bar.inc(1);
-        self.progress_bar.println(
+        emit(
+            &self.progress_bar,
             format!(
                 "{} {}",
                 format_clean_action(&candidate, ActionLabel::Success),
@@ -57,7 +95,8 @@ impl<'a> CleanerNotifier for &LoggingCleanerNotifier<'a> {
 
     fn notify_removal_failed(&self, candidate: RemovalCandidate, report: Report) {
         self.progress_bar.inc(1);
-        self.progress_bar.println(
+        emit(
+            &self.progress_bar,
             format!(
                 "{} {}: {}",
                 format_clean_action(&candidate, ActionLabel::Failed),
@@ -89,13 +128,11 @@ pub struct VecWalkNotifier<'a> {
 }
 
 impl<'a> VecWalkNotifier<'a> {
-    pub fn new(base_path: &'a Path, name_width: usize) -> Self {
-        let progress_bar = ProgressBar::new_spinner();
-        progress_bar.enable_steady_tick(Duration::from_millis(50));
+    pub fn new(base_path: &'a Path, name_width: usize, animated: bool) -> Self {
         Self {
             base_path,
             name_width,
-            progress_bar,
+            progress_bar: spinner(animated),
             to_remove: RefCell::default(),
         }
     }
@@ -111,7 +148,7 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
         // Pad before colouring: the escape sequences are not printable width, so padding
-        // a already-coloured string is the classic way to get ragged columns.
+        // an already-coloured string is the classic way to get ragged columns.
         let name = format!(
             "{:>width$}",
             candidate.matcher_name,
@@ -123,18 +160,22 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
             width = SIZE_COLUMN_WIDTH
         );
 
-        self.progress_bar.println(format!(
-            "{} {} {}",
-            name.green(),
-            size.cyan(),
-            format_candidate(self.base_path, &candidate),
-        ));
+        emit(
+            &self.progress_bar,
+            format!(
+                "{} {} {}",
+                name.green(),
+                size.cyan(),
+                format_candidate(self.base_path, &candidate),
+            ),
+        );
 
         self.to_remove.borrow_mut().push(candidate);
     }
 
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report) {
-        self.progress_bar.println(
+        emit(
+            &self.progress_bar,
             format!(
                 "Failed to scan {}: {}",
                 format_path(self.base_path, &e.path),
@@ -156,7 +197,7 @@ fn format_candidate(base_path: &Path, candidate: &RemovalCandidate) -> String {
         RemovalAction::Delete { file_info, .. } => format_path(base_path, &file_info.path),
         RemovalAction::RunCommand { work_dir, command } => {
             let path_str = format_path(base_path, &work_dir.path);
-            format!("`{}` in `{}`", command, path_str)
+            format!("`{command}` in `{path_str}`")
         }
     }
 }

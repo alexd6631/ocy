@@ -15,17 +15,14 @@ use ocy_core::{cleaner::Cleaner, models::RemovalCandidate};
 use rules::{SCANNED_HIDDEN_DIRS, standard_rules};
 use std::process::ExitCode;
 
-use notifiers::{LoggingCleanerNotifier, VecWalkNotifier};
+use notifiers::{LoggingCleanerNotifier, VecWalkNotifier, progress_is_useful};
 use options::OcyOptions;
 use utils::{format_file_size_and_more, prompt};
 
 fn main() -> Result<ExitCode> {
     let options = OcyOptions::parse_args_default_or_exit();
 
-    // Silent unless `RUST_LOG` asks for output, so the progress display stays clean in
-    // normal use. Diagnostics go to stderr; the progress bar draws there too, so expect
-    // the two to interleave while debugging.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")).init();
+    init_logging(&options);
 
     print_banner();
 
@@ -57,7 +54,13 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
         eyre::bail!("--one-file-system is not supported on this platform");
     }
 
-    let files = perform_walk(&current_directory, walk_options, options.allow_commands)?;
+    let animated = progress_is_useful();
+    let files = perform_walk(
+        &current_directory,
+        walk_options,
+        options.allow_commands,
+        animated,
+    )?;
 
     // An empty scan is a successful scan: there was simply nothing to reclaim.
     if files.is_empty() {
@@ -71,7 +74,7 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
         if options.dry_run {
             println!("Would reclaim {} (dry run)", total.cyan());
         } else if prompt(&format!("Reclaim {} (y/N) ? ", total.cyan()))? {
-            perform_clean(&current_directory, files);
+            perform_clean(&current_directory, files, animated);
         }
         Ok(ExitCode::SUCCESS)
     }
@@ -81,17 +84,18 @@ fn perform_walk(
     current_directory: &FileInfo,
     walk_options: WalkOptions,
     allow_commands: bool,
+    animated: bool,
 ) -> Result<Vec<RemovalCandidate>> {
     let rules = standard_rules(allow_commands)?;
-    let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&rules));
+    let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&rules), animated);
     let walker = Walker::new(RealFileSystem, rules, &notifier, walk_options);
 
     walker.walk_from_path(current_directory);
     Ok(notifier.to_remove.into_inner())
 }
 
-fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>) {
-    let notifier = LoggingCleanerNotifier::new(&current_directory.path, files.len());
+fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>, animated: bool) {
+    let notifier = LoggingCleanerNotifier::new(&current_directory.path, files.len(), animated);
     let cleaner = Cleaner::new(files, RealFileSystem, RealCommandExecutor, &notifier);
     cleaner.clean();
 }
@@ -100,6 +104,20 @@ fn total_size(files: &[RemovalCandidate]) -> (u64, bool) {
     let estimate = files.iter().map(|e| e.estimate_file_size()).sum();
     let has_more = files.iter().any(|e| e.file_size().is_none());
     (estimate, has_more)
+}
+
+/// Start logging, silent unless asked.
+///
+/// Diagnostics go to stderr, where the progress bar also draws, so the two interleave
+/// while debugging.
+fn init_logging(options: &OcyOptions) {
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off"));
+
+    if let Some(filter) = options.log_filter() {
+        builder.filter_level(filter);
+    }
+    builder.init();
 }
 
 fn print_banner() {
