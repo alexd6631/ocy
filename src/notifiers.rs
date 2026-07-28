@@ -134,7 +134,7 @@ fn format_candidate(base_path: &Path, candidate: &RemovalCandidate) -> String {
         RemovalAction::Delete { file_info, .. } => format_path(base_path, &file_info.path),
         RemovalAction::RunCommand { work_dir, command } => {
             let path_str = format_path(base_path, &work_dir.path);
-            format!("`{}` in `{}`", &command, path_str)
+            format!("`{}` in `{}`", command, path_str)
         }
     }
 }

@@ -11,11 +11,7 @@ pub fn format_opt_file_size(size: Option<u64>) -> String {
 
 pub fn format_file_size_and_more(size: u64, has_more: bool) -> String {
     let size = format_file_size(size);
-    if has_more {
-        format!("{}+", size)
-    } else {
-        size
-    }
+    if has_more { format!("{}+", size) } else { size }
 }
 
 pub fn format_file_size(size: u64) -> String {
@@ -30,7 +26,7 @@ pub fn prompt(message: &str) -> bool {
     let stdin = std::io::stdin();
     stdin.read_line(&mut buffer).unwrap();
 
-    buffer.trim().to_ascii_lowercase() == "y"
+    buffer.trim().eq_ignore_ascii_case("y")
 }
 
 pub fn format_path(base_path: &Path, p: &Path) -> String {

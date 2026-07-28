@@ -2,7 +2,7 @@
 name = "ocy-core"
 version = "0.1.7"
 authors = ["Alexandre Delattre <alexandre.delattre.biz@gmail.com>"]
-edition = "2021"
+edition = "2024"
 description = "Core package for ocy project cleaner CLI"
 license = "MIT OR Apache-2.0"
 

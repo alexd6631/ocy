@@ -199,9 +199,7 @@ mod tests {
                     PathBuf::from_str("/home/user/projectA/target").unwrap()
                 )
             }
-            RemovalAction::RunCommand { work_dir, command } => {
-                panic!("should be delete")
-            }
+            RemovalAction::RunCommand { .. } => panic!("should be delete"),
         }
 
         Ok(())
