@@ -435,3 +435,47 @@ fn a_visible_worktree_is_not_scanned_twice() -> eyre::Result<()> {
     assert_eq!(vec!["repo/visible/target"], found);
     Ok(())
 }
+
+/// Build a repository with one worktree record whose checkout is gone.
+fn repo_with_stale_record(root: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo)?;
+    let record = repo.join(".git").join("worktrees").join("gone");
+    std::fs::create_dir_all(&record)?;
+    std::fs::write(
+        record.join("gitdir"),
+        format!("{}\n", repo.join("vanished").join(".git").display()),
+    )?;
+    Ok(record)
+}
+
+#[test]
+fn claims_a_stale_worktree_record() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    repo_with_stale_record(temp.path())?;
+
+    let rules = vec![Rule::prune_stale_worktrees("Git worktree", &[".git"])?];
+    let found = reclaimed_on_disk(temp.path(), rules, WalkOptions::default());
+
+    assert_eq!(vec!["repo/.git/worktrees/gone"], found);
+    Ok(())
+}
+
+/// The ignore check lives in the shared claim gate, so it has to cover worktree records
+/// too -- they do not come from the directory listing that other candidates are filtered
+/// against.
+#[test]
+fn honours_ignores_for_a_stale_worktree_record() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let record = repo_with_stale_record(temp.path())?;
+
+    let options = WalkOptions {
+        ignores: HashSet::from([record.canonicalize()?]),
+        ..Default::default()
+    };
+    let rules = vec![Rule::prune_stale_worktrees("Git worktree", &[".git"])?];
+    let found = reclaimed_on_disk(&temp.path().canonicalize()?, rules, options);
+
+    assert!(found.is_empty(), "claimed an ignored record: {found:?}");
+    Ok(())
+}

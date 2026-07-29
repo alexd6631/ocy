@@ -174,14 +174,14 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                 // The scan root is never proposed for deletion: running ocy from inside a
                 // venv must not offer to delete the directory being scanned.
                 CleanAction::RemoveSelf if depth > 0 => {
-                    self.emit_removal(rule, dir.clone());
-                    return Ok(DirOutcome::Reclaimed);
+                    if self.claim(rule, dir.clone()) {
+                        return Ok(DirOutcome::Reclaimed);
+                    }
                 }
                 CleanAction::RemoveSelf => (),
                 CleanAction::Remove(targets) => {
                     let claimed = self.claim_targets(rule, &entries, targets);
                     entries.retain(|entry| !claimed.contains(&entry.path));
-                    self.pruned.borrow_mut().extend(claimed);
                 }
                 CleanAction::Run(command) => {
                     self.notifier
@@ -204,7 +204,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     /// Report every target of a matched rule that actually exists.
     ///
-    /// Returns the claimed paths so the caller can avoid descending into them.
+    /// Returns the paths that were claimed, so the caller can drop them from the entries
+    /// it is about to descend into.
     fn claim_targets(
         &self,
         rule: &Rule,
@@ -214,13 +215,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         targets
             .iter()
             .flat_map(|target| self.resolve_target(entries, target))
-            .filter(|found| !self.is_ignored(&found.path))
-            .filter(|found| !self.is_already_claimed(&found.path))
-            .map(|found| {
+            .filter_map(|found| {
                 let path = found.path.clone();
-                self.pruned.borrow_mut().insert(path.clone());
-                self.emit_removal(rule, found);
-                path
+                self.claim(rule, found).then_some(path)
             })
             .collect()
     }
@@ -263,13 +260,12 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     fn claim_stale_worktrees(&self, rule: &Rule, dir: &FileInfo) {
         crate::git::stale_worktree_records(&dir.path.join(".git"))
             .into_iter()
-            .filter(|record| !self.is_ignored(record))
             .for_each(|record| {
                 let name = record
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.emit_removal(rule, FileInfo::new(record, name, SimpleFileKind::Directory));
+                self.claim(rule, FileInfo::new(record, name, SimpleFileKind::Directory));
             });
     }
 
@@ -291,7 +287,17 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             }));
     }
 
-    fn emit_removal(&self, rule: &Rule, file: FileInfo) {
+    /// Claim `file` for `rule` and report it, unless it must not be claimed.
+    ///
+    /// Every claim goes through here, so being ignored, overlapping an existing candidate
+    /// and recording what has been claimed are decided in one place instead of in each
+    /// caller. Returns whether the claim was taken.
+    fn claim(&self, rule: &Rule, file: FileInfo) -> bool {
+        if self.is_ignored(&file.path) || self.is_already_claimed(&file.path) {
+            return false;
+        }
+        self.pruned.borrow_mut().insert(file.path.clone());
+
         let size = match self.fs.file_size(&file) {
             Ok(size) => Some(size),
             Err(report) => {
@@ -312,6 +318,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         self.candidates_found.set(self.candidates_found.get() + 1);
         self.notifier
             .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
+        true
     }
 
     fn is_ignored(&self, path: &Path) -> bool {

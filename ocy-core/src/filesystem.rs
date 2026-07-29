@@ -13,8 +13,14 @@ use std::path::Path;
 
 /// The contents of a directory, together with any per-entry failures.
 ///
-/// Reading a directory is not all-or-nothing: a single entry that cannot be stat'ed must
-/// not hide its siblings, because a hidden sibling is silently unreclaimed disk space.
+/// Reading a directory is not all-or-nothing. A hidden sibling is silently unreclaimed
+/// disk space, so one bad entry must not discard the rest of the listing.
+///
+/// Two different things could discard it, and they are handled differently. A name that
+/// does not decode as UTF-8 is not an error at all -- see [`FileInfo::name`], which keeps
+/// the decoded form for matching and the original [`std::path::PathBuf`] for every
+/// filesystem operation. `errors` covers the remaining case: an entry whose type cannot be
+/// determined, which is rare and genuinely unusable.
 #[derive(Debug, Default)]
 pub struct DirListing {
     pub entries: Vec<FileInfo>,
@@ -120,6 +126,11 @@ impl RealFileSystem {
     }
 }
 
+/// Describe one directory entry.
+///
+/// Only the type lookup can fail. The name is decoded lossily rather than validated: rules
+/// match on names, and a name that does not decode cannot match one anyway, so refusing it
+/// would discard a perfectly good entry -- and, before this was split out, its siblings too.
 fn describe_entry(entry: &DirEntry) -> Result<FileInfo> {
     let file_type = entry
         .file_type()

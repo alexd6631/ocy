@@ -12,6 +12,10 @@ fn dir_info(path: &Path) -> FileInfo {
 }
 
 /// A name that is not valid UTF-8 must not hide the rest of the directory.
+///
+/// Only a filesystem that accepts such a name can exercise this. APFS and HFS+ enforce
+/// valid UTF-8 and reject the fixture outright with `EILSEQ`, so on macOS there is nothing
+/// to observe; the test says so and passes rather than failing on an unbuildable fixture.
 #[cfg(unix)]
 #[test]
 fn lists_siblings_of_a_non_utf8_name() -> eyre::Result<()> {
@@ -21,15 +25,29 @@ fn lists_siblings_of_a_non_utf8_name() -> eyre::Result<()> {
     let temp = tempfile::tempdir()?;
     fs::write(temp.path().join("Cargo.toml"), "")?;
     fs::create_dir(temp.path().join("target"))?;
-    fs::write(temp.path().join(OsStr::from_bytes(b"\xff\xfebad")), "")?;
+
+    let non_utf8 = temp.path().join(OsStr::from_bytes(b"\xff\xfebad"));
+    let undecodable_name_exists = match fs::write(&non_utf8, "") {
+        Ok(()) => true,
+        Err(report) => {
+            eprintln!("filesystem rejects non-UTF-8 names ({report}); asserting the rest");
+            false
+        }
+    };
 
     let listing = RealFileSystem.list_files(&dir_info(temp.path()))?;
     let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
 
     assert!(names.contains(&"Cargo.toml"), "got {names:?}");
     assert!(names.contains(&"target"), "got {names:?}");
-    assert_eq!(3, listing.entries.len(), "got {names:?}");
+    // An undecodable name is reported lossily rather than as an error, so it lands in
+    // `entries` and nothing is accumulated in `errors` for it.
     assert!(listing.errors.is_empty());
+    assert_eq!(
+        if undecodable_name_exists { 3 } else { 2 },
+        listing.entries.len(),
+        "got {names:?}"
+    );
     Ok(())
 }
 
