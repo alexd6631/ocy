@@ -40,13 +40,61 @@ pub struct WalkOptions {
     pub one_file_system: bool,
 }
 
+/// Tracks paths already claimed by a rule, so nested candidates are not walked or re-reported.
+///
+/// This wrapper encapsulates the `RefCell<HashSet<PathBuf>>` to ensure borrow/borrow_mut
+/// operations are temporary and cannot overlap.
+#[derive(Debug, Default)]
+pub struct PrunedSet {
+    inner: RefCell<HashSet<PathBuf>>,
+}
+
+impl PrunedSet {
+    /// Creates a new empty PrunedSet.
+    pub fn new() -> Self {
+        Self {
+            inner: RefCell::new(HashSet::new()),
+        }
+    }
+
+    /// Checks if a path is directly in the pruned set.
+    pub fn contains(&self, path: &Path) -> bool {
+        self.inner.borrow().contains(path)
+    }
+
+    /// Inserts a path into the pruned set.
+    pub fn insert(&self, path: PathBuf) {
+        self.inner.borrow_mut().insert(path);
+    }
+
+    /// Whether this path overlaps a candidate that has already been reported.
+    ///
+    /// Reporting both a directory and something inside it would count the nested bytes
+    /// twice in the total and race the two deletions against each other. Rules within a
+    /// directory are applied in order, so the overlap can be found in either direction:
+    /// a nested target may be claimed before the parent enclosing it, or after.
+    ///
+    /// Candidates stream to the user as they are found, so the first claim stands and the
+    /// overlapping one is dropped. That can leave an enclosing directory unreclaimed,
+    /// which is the safe direction to err for a tool that deletes things.
+    ///
+    /// Returns true if:
+    /// - Any ancestor of `path` is in the pruned set (path is inside a claimed directory)
+    /// - Any path in the pruned set starts with `path` (path is a parent of something claimed)
+    pub fn is_already_claimed(&self, path: &Path) -> bool {
+        let pruned = self.inner.borrow();
+        path.ancestors().any(|ancestor| pruned.contains(ancestor))
+            || pruned.iter().any(|claimed| claimed.starts_with(path))
+    }
+}
+
 pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     fs: FS,
     rules: Vec<Rule>,
     notifier: N,
     options: WalkOptions,
     /// Paths already claimed by a rule, so nested candidates are not walked or re-reported.
-    pruned: RefCell<HashSet<PathBuf>>,
+    pruned: PrunedSet,
     root_device: RefCell<Option<u64>>,
     /// Directories already walked, so a worktree reached both by descent and by its git
     /// record is scanned once and counted once.
@@ -79,7 +127,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             rules,
             notifier,
             options,
-            pruned: RefCell::default(),
+            pruned: PrunedSet::new(),
             root_device: RefCell::default(),
             visited: RefCell::default(),
             pending_worktrees: RefCell::default(),
@@ -137,7 +185,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn process_dir(&self, file: &FileInfo, depth: usize) {
-        if self.is_ignored(&file.path) || self.pruned.borrow().contains(&file.path) {
+        // TODO consider using is_already_claimed
+        if self.is_ignored(&file.path) || self.pruned.contains(&file.path) {
             return;
         }
         if !self.visited.borrow_mut().insert(file.path.clone()) {
@@ -293,10 +342,10 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     /// and recording what has been claimed are decided in one place instead of in each
     /// caller. Returns whether the claim was taken.
     fn claim(&self, rule: &Rule, file: FileInfo) -> bool {
-        if self.is_ignored(&file.path) || self.is_already_claimed(&file.path) {
+        if self.is_ignored(&file.path) || self.pruned.is_already_claimed(&file.path) {
             return false;
         }
-        self.pruned.borrow_mut().insert(file.path.clone());
+        self.pruned.insert(file.path.clone());
 
         let size = match self.fs.file_size(&file) {
             Ok(size) => Some(size),
@@ -315,7 +364,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                 |size| format!("{size} bytes")
             )
         );
-        self.candidates_found.set(self.candidates_found.get() + 1);
+        self.candidates_found.update(|n| n + 1);
         self.notifier
             .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
         true
@@ -323,22 +372,6 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn is_ignored(&self, path: &Path) -> bool {
         self.options.ignores.contains(path)
-    }
-
-    /// Whether this path overlaps a candidate that has already been reported.
-    ///
-    /// Reporting both a directory and something inside it would count the nested bytes
-    /// twice in the total and race the two deletions against each other. Rules within a
-    /// directory are applied in order, so the overlap can be found in either direction:
-    /// a nested target may be claimed before the parent enclosing it, or after.
-    ///
-    /// Candidates stream to the user as they are found, so the first claim stands and the
-    /// overlapping one is dropped. That can leave an enclosing directory unreclaimed,
-    /// which is the safe direction to err for a tool that deletes things.
-    fn is_already_claimed(&self, path: &Path) -> bool {
-        let pruned = self.pruned.borrow();
-        path.ancestors().any(|ancestor| pruned.contains(ancestor))
-            || pruned.iter().any(|claimed| claimed.starts_with(path))
     }
 
     fn is_walkable(&self, file: &FileInfo, depth: usize) -> bool {
