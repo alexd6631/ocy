@@ -28,7 +28,11 @@ pub struct DirListing {
 }
 
 pub trait FileSystem {
-    fn current_directory(&self) -> Result<FileInfo>;
+    fn current_directory(&self) -> Result<FileInfo> {
+        self.directory_from_current::<&str>(None)
+    }
+
+    fn directory_from_current<P: AsRef<Path>>(&self, path: Option<P>) -> Result<FileInfo>;
 
     fn list_files(&self, file: &FileInfo) -> Result<DirListing>;
 
@@ -51,8 +55,12 @@ pub trait FileSystemClean {
 pub struct RealFileSystem;
 
 impl FileSystem for RealFileSystem {
-    fn current_directory(&self) -> Result<FileInfo> {
-        let path_buf = std::env::current_dir()?;
+    fn directory_from_current<P: AsRef<Path>>(&self, path: Option<P>) -> Result<FileInfo> {
+        let mut path_buf = std::env::current_dir()?;
+        if let Some(p) = path {
+            path_buf.push(p);
+        }
+
         Ok(FileInfo::new(
             path_buf,
             "".into(),

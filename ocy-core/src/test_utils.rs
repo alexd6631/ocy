@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{ffi::OsString, path::Path};
 
 use eyre::ContextCompat;
@@ -64,9 +65,14 @@ impl MockFs {
 }
 
 impl FileSystem for MockFs {
-    fn current_directory(&self) -> eyre::Result<FileInfo> {
+    fn directory_from_current<P: AsRef<Path>>(&self, path: Option<P>) -> eyre::Result<FileInfo> {
+        let mut path_buf: PathBuf = "/home/user".into();
+        if let Some(p) = path {
+            path_buf.push(p);
+        }
+        
         Ok(FileInfo::new(
-            "/home/user".into(),
+            path_buf,
             "user".to_string(),
             SimpleFileKind::Directory,
         ))

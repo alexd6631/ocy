@@ -39,6 +39,11 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
         .current_directory()
         .wrap_err("Cannot scan current directory")?;
 
+    let start_dir = options.start_directory()?;
+    let start_directory = RealFileSystem
+        .directory_from_current(start_dir)
+        .wrap_err("Cannot scan start directory")?;
+
     let walk_options = WalkOptions {
         ignores: options.ignores_set()?,
         walk_all: options.walk_all,
@@ -58,6 +63,7 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
     let animated = progress_is_useful();
     let files = perform_walk(
         &current_directory,
+        &start_directory,
         walk_options,
         options.allow_commands,
         animated,
@@ -83,6 +89,7 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
 
 fn perform_walk(
     current_directory: &FileInfo,
+    start_directory: &FileInfo,
     walk_options: WalkOptions,
     allow_commands: bool,
     animated: bool,
@@ -91,7 +98,7 @@ fn perform_walk(
     let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&rules), animated);
     let walker = Walker::new(RealFileSystem, rules, &notifier, walk_options);
 
-    walker.walk_from_path(current_directory);
+    walker.walk_from_path(start_directory);
     Ok(notifier.to_remove.into_inner())
 }
 

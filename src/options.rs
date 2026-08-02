@@ -15,6 +15,9 @@ pub struct OcyOptions {
     #[options(help = "print help message")]
     help: bool,
 
+    #[options(free, help = "start directory (defaults to current directory)")]
+    pub start_dir: Vec<String>,
+
     /// Held as written rather than as a [`PathBuf`], because the value is split before it
     /// is a path. Repeated once per path, so the flag is singular despite collecting a list.
     #[options(
@@ -100,6 +103,19 @@ impl OcyOptions {
             .map(|value| resolve_ignore(value))
             .collect::<Result<Vec<_>>>()
             .map(|paths| paths.into_iter().flatten().collect())
+    }
+
+    /// Returns the start directory if specified.
+    ///
+    /// Returns `Ok(None)` if no start directory was provided (use current directory).
+    /// Returns `Ok(Some(path))` if a single start directory was provided.
+    /// Returns an error if multiple start directories were provided.
+    pub fn start_directory(&self) -> Result<Option<&str>> {
+        match self.start_dir.len() {
+            0 => Ok(None),
+            1 => Ok(Some(&self.start_dir[0])),
+            _ => eyre::bail!("Only one start directory can be specified"),
+        }
     }
 }
 
