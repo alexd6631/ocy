@@ -18,6 +18,16 @@ pub struct OcyOptions {
     #[options(free, help = "start directory (defaults to current directory)")]
     pub start_dir: Vec<String>,
 
+    #[options(
+        short = "r",
+        long = "rule",
+        help = "apply only these rules (repeatable)"
+    )]
+    pub rules: Vec<String>,
+
+    #[options(long = "rules", help = "list all available rules")]
+    pub list_rules: bool,
+
     /// Held as written rather than as a [`PathBuf`], because the value is split before it
     /// is a path. Repeated once per path, so the flag is singular despite collecting a list.
     #[options(
@@ -116,6 +126,11 @@ impl OcyOptions {
             1 => Ok(Some(&self.start_dir[0])),
             _ => eyre::bail!("Only one start directory can be specified"),
         }
+    }
+
+    /// Returns the slice of selected rule names.
+    pub fn selected_rules(&self) -> &[String] {
+        &self.rules
     }
 }
 

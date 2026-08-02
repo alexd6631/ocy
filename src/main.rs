@@ -10,11 +10,13 @@ use gumdrop::Options;
 use ocy_core::command::RealCommandExecutor;
 use ocy_core::filesystem::{FileSystem, RealFileSystem};
 use ocy_core::models::FileInfo;
+use ocy_core::rule::Rule;
 use ocy_core::rule::widest_name;
 use ocy_core::walker::{WalkOptions, Walker};
 use ocy_core::{cleaner::Cleaner, models::RemovalCandidate};
-use rules::{SCANNED_HIDDEN_DIRS, standard_rules};
+use rules::{SCANNED_HIDDEN_DIRS, rule_names, standard_rules};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use notifiers::{LoggingCleanerNotifier, VecWalkNotifier, progress_is_useful};
 use options::OcyOptions;
@@ -27,7 +29,10 @@ fn main() -> Result<ExitCode> {
 
     print_banner();
 
-    if options.version {
+    if options.list_rules {
+        print_rules()?;
+        Ok(ExitCode::SUCCESS)
+    } else if options.version {
         Ok(ExitCode::SUCCESS)
     } else {
         run(&options)
@@ -43,6 +48,8 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
     let start_directory = RealFileSystem
         .directory_from_current(start_dir)
         .wrap_err("Cannot scan start directory")?;
+
+    let rules = rules_for_options(options)?;
 
     let walk_options = WalkOptions {
         ignores: options.ignores_set()?,
@@ -65,7 +72,7 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
         &current_directory,
         &start_directory,
         walk_options,
-        options.allow_commands,
+        rules,
         animated,
     )?;
 
@@ -87,14 +94,36 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
     }
 }
 
+fn rules_for_options(options: &OcyOptions) -> Result<Vec<Rule>> {
+    let all_rules = standard_rules(options.allow_commands)?;
+    let all_rule_names = rule_names(&all_rules);
+
+    let selected_rules = options.selected_rules();
+
+    for rule_name in selected_rules {
+        if !all_rule_names.contains(rule_name.as_str()) {
+            eyre::bail!("Unknown rule: {}", rule_name);
+        }
+    }
+
+    let filtered_rules = if selected_rules.is_empty() {
+        all_rules
+    } else {
+        all_rules
+            .into_iter()
+            .filter(|rule| selected_rules.contains(&rule.name.to_string()))
+            .collect()
+    };
+    Ok(filtered_rules)
+}
+
 fn perform_walk(
     current_directory: &FileInfo,
     start_directory: &FileInfo,
     walk_options: WalkOptions,
-    allow_commands: bool,
+    rules: Vec<Rule>,
     animated: bool,
 ) -> Result<Vec<RemovalCandidate>> {
-    let rules = standard_rules(allow_commands)?;
     let notifier = VecWalkNotifier::new(&current_directory.path, widest_name(&rules), animated);
     let walker = Walker::new(RealFileSystem, rules, &notifier, walk_options);
 
@@ -133,4 +162,16 @@ fn print_banner() {
     let banner_template = include_str!("../data/banner.txt");
     let banner = banner_template.replace("$VERSION", version);
     println!("{}", banner.yellow());
+}
+
+fn print_rules() -> Result<()> {
+    let rules = rule_names(&standard_rules(true)?);
+    let mut rules: Vec<Arc<str>> = rules.into_iter().collect();
+    rules.sort();
+
+    println!("Supported rules:");
+    for rule in rules {
+        println!(" - {}", rule);
+    }
+    Ok(())
 }

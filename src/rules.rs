@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use ocy_core::rule::{Rule, RuleError};
 
 /// Hidden directories the walk descends into by default.
@@ -107,6 +110,11 @@ pub fn standard_rules(allow_commands: bool) -> Result<Vec<Rule>, RuleError> {
         .into_iter();
 
     Ok(rules.into_iter().chain(command_rules).collect())
+}
+
+/// Extract rule names from a slice of rules.
+pub fn rule_names(rules: &[Rule]) -> HashSet<Arc<str>> {
+    rules.iter().map(|rule| rule.name.clone()).collect()
 }
 
 #[cfg(test)]
