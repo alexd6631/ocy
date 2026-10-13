@@ -34,7 +34,7 @@ pub struct OcyOptions {
         short = "i",
         long = "ignore",
         meta = "PATH[,PATH...]",
-        help = "ignore path(s), repeatable"
+        help = "ignore path(s) and everything under them, repeatable"
     )]
     pub ignores: Vec<String>,
 

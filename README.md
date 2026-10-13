@@ -253,7 +253,7 @@ Optional arguments:
   -r, --rule RULES       apply only these rules (repeatable)
   -l, --rules            list all available rules
   -i, --ignore PATH[,PATH...]
-                         ignore path(s), repeatable
+                         ignore path(s) and everything under them, repeatable
   -V, --version          print version
   -v, --verbose          log more; repeat for debug and trace
   -q, --quiet            suppress all logging
@@ -264,6 +264,13 @@ Optional arguments:
   -m, --max-depth N      do not descend deeper than this many levels
   -x, --one-file-system  do not cross onto another filesystem
 ```
+
+A path passed to `--ignore` takes its whole subtree with it: an application's own
+directory holds its data and its bundled dependencies the way a project holds its
+build output, so ignoring it has to cover every level below it. This is also how
+the hidden directories under `$HOME` are kept out of every scan, `--all`
+included -- a subdirectory of one stays protected whether the walk reaches it by
+descent or as the scan root itself.
 
 `--ignore` accepts both forms, and they compose:
 

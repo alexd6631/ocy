@@ -52,7 +52,12 @@ pub const INSTALLED_DIRS: &[&str] = &["node_modules"];
 
 #[derive(Debug, Default, Clone)]
 pub struct WalkOptions {
-    /// Absolute paths that are neither scanned nor reclaimed.
+    /// Absolute paths that are neither scanned nor reclaimed, nor anything under them.
+    ///
+    /// A subtree is what has to be protected: an application's own directory holds its
+    /// data and its bundled dependencies the same way a project holds its build output,
+    /// so ignoring the directory has to cover every level below it. Protecting only the
+    /// named path would leave a scan pointed inside it free to reclaim what it finds.
     pub ignores: HashSet<PathBuf>,
 
     /// Descend into every hidden directory, not only [`WalkOptions::scanned_hidden`].
@@ -386,11 +391,7 @@ impl<FS: FileSystem + Sync, N: WalkNotifier + Sync> Walker<FS, N> {
     fn follow_link(&self, link: &FileInfo) -> Option<FileInfo> {
         let real = self.fs.resolve_link(link)?;
 
-        if real
-            .path
-            .ancestors()
-            .any(|ancestor| self.is_ignored(ancestor))
-        {
+        if self.is_ignored(&real.path) {
             log::debug!(
                 "not following {}: {} is ignored",
                 link.path.display(),
@@ -480,8 +481,15 @@ impl<FS: FileSystem + Sync, N: WalkNotifier + Sync> Walker<FS, N> {
         true
     }
 
+    /// Whether `path` is ignored, or lies under something that is.
+    ///
+    /// Checked against every ancestor rather than the path alone, so an ignored
+    /// directory protects what is inside it even when the walk reaches that content
+    /// directly -- as a scan root, a linked worktree checkout, or a followed symlink --
+    /// without ever visiting the ignored directory itself.
     fn is_ignored(&self, path: &Path) -> bool {
-        self.options.ignores.contains(path)
+        path.ancestors()
+            .any(|ancestor| self.options.ignores.contains(ancestor))
     }
 
     fn is_walkable(&self, file: &FileInfo, depth: usize) -> bool {

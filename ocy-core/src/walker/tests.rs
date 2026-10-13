@@ -294,6 +294,60 @@ fn honours_ignores() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Ignoring a directory protects everything under it, even when the scan is pointed
+/// inside that directory. A walk root is never vetted by the descent that would normally
+/// have stopped at the ignored parent, so the check has to cover the whole subtree.
+#[test]
+fn an_ignored_directory_protects_a_project_beneath_it() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let app = temp.path().join("app");
+    let project = app.join("nested").join("project");
+    std::fs::create_dir_all(project.join("target"))?;
+    std::fs::write(project.join("Cargo.toml"), "")?;
+
+    let rules = || vec![Rule::remove("Cargo", &["Cargo.toml"], &["target"]).expect("rule")];
+    let ignores = WalkOptions {
+        ignores: HashSet::from([app.canonicalize()?]),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vec!["target"],
+        reclaimed_on_disk(&project, rules(), WalkOptions::default()),
+        "the fixture should be reclaimable without the ignore"
+    );
+    assert!(
+        reclaimed_on_disk(&project, rules(), ignores).is_empty(),
+        "an ignored directory must protect what is beneath it"
+    );
+    Ok(())
+}
+
+/// A linked worktree is reached through its git record rather than by descent, so
+/// ignoring the directory holding it has to stop that path in too. Otherwise the
+/// protection would hold only for trees the walk happened to enter the ordinary way.
+#[test]
+fn an_ignored_directory_protects_a_linked_worktree_beneath_it() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    repo_with_hidden_worktree(temp.path())?;
+
+    let rules = vec![
+        Rule::remove("Cargo", &["Cargo.toml"], &["target"])?,
+        Rule::prune_stale_worktrees("Git worktree", &[".git"])?,
+    ];
+    let options = WalkOptions {
+        ignores: HashSet::from([temp.path().join("repo").join(".claude").canonicalize()?]),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vec!["repo/target"],
+        reclaimed_on_disk(temp.path(), rules, options),
+        "the worktree under the ignored directory must not be reclaimed"
+    );
+    Ok(())
+}
+
 #[test]
 fn reports_a_command_rule_against_its_directory() -> eyre::Result<()> {
     let tree = under_home(vec![MockFsNode::dir(
