@@ -597,6 +597,23 @@ fn rule_name_matching_is_case_insensitive() {
     assert!(super::rule_name_matches("Cargo", "Cargo"));
 }
 
+/// The guarantee is for every rule, not only the one used as the example above. A rule
+/// added later is covered by construction: matching is done on the name, whatever it is.
+#[test]
+fn every_rule_name_matches_in_any_case() -> eyre::Result<()> {
+    let rules = standard_rules(true, true)?;
+
+    for name in super::rule_names(&rules) {
+        for requested in [name.to_string(), name.to_uppercase(), name.to_lowercase()] {
+            assert!(
+                super::rule_name_matches(&name, &requested),
+                "{requested:?} did not select rule {name:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `Cargo` is the build tool; `Rust` is the language someone scanning their own machine
 /// is more likely to type.
 #[test]

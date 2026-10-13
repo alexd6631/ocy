@@ -424,8 +424,9 @@ const RULE_SYNONYMS: &[(&str, &str)] = &[("rust", "Cargo"), ("apt", "APT cache")
 
 /// Whether a `--rule` value selects `rule_name`.
 ///
-/// Case-insensitive, and through [`RULE_SYNONYMS`] first: `--rule Cargo`, `--rule cargo`
-/// and `--rule rust` all select the same rule.
+/// Every rule name is matched case-insensitively -- `--rule Cargo`, `--rule cargo` and
+/// `--rule CARGO` all select the same rule -- and [`RULE_SYNONYMS`] is consulted first,
+/// so `--rule rust` selects `Cargo` as well.
 pub fn rule_name_matches(rule_name: &str, requested: &str) -> bool {
     let requested = RULE_SYNONYMS
         .iter()
