@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 eyre = "0.6"
 glob = "0.3"
 log = "0.4"
+rayon = "1"
 thiserror = "2"
 
 [dev-dependencies]

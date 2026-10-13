@@ -26,8 +26,18 @@ const RULE_TINTS: &[(&str, (u8, u8, u8))] = &[
     ("Unity", (195, 195, 195)),
     ("Terraform", (150, 90, 225)),
     ("Composer", (125, 160, 110)),
+    ("Trunk", (235, 165, 80)),
     ("Git worktree", (225, 155, 60)),
     ("Make", (200, 175, 120)),
+    // Shared caches, muted against the project rules they sit beside. What is about to be
+    // deleted belongs to the whole machine rather than to one project, and reading as a
+    // group is the one thing the colour can say about that.
+    ("Cargo registry", (205, 150, 110)),
+    ("Cargo git", (190, 135, 100)),
+    ("Gradle cache", (110, 165, 160)),
+    ("Tool cache", (140, 150, 165)),
+    // Debian's red, muted like the other shared caches.
+    ("APT cache", (185, 95, 120)),
 ];
 
 /// Tints used for rules with no curated entry.

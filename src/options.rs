@@ -34,7 +34,7 @@ pub struct OcyOptions {
         short = "i",
         long = "ignore",
         meta = "PATH[,PATH...]",
-        help = "ignore path(s), repeatable"
+        help = "ignore path(s) and everything under them, repeatable"
     )]
     pub ignores: Vec<String>,
 
@@ -69,6 +69,15 @@ pub struct OcyOptions {
     )]
     pub allow_commands: bool,
 
+    /// Long form only, deliberately: this reaches outside the tree being scanned, which
+    /// is not something to hand a one-letter flag that is easy to type by accident.
+    #[options(
+        no_short,
+        long = "caches",
+        help = "also reclaim shared tool caches (cargo registry and git, sccache, ...)"
+    )]
+    pub clean_caches: bool,
+
     #[options(
         long = "max-depth",
         meta = "N",
@@ -82,6 +91,13 @@ pub struct OcyOptions {
         help = "do not cross onto another filesystem"
     )]
     pub one_file_system: bool,
+
+    #[options(
+        no_short,
+        long = "no-follow-links",
+        help = "leave a cache that is a symlink alone instead of reclaiming what it points at"
+    )]
+    pub no_follow_links: bool,
 }
 
 impl OcyOptions {
@@ -124,7 +140,7 @@ impl OcyOptions {
         match self.start_dir.len() {
             0 => Ok(None),
             1 => Ok(Some(&self.start_dir[0])),
-            _ => eyre::bail!("Only one start directory can be specified"),
+            _ => Err(eyre::eyre!("Only one start directory can be specified")),
         }
     }
 

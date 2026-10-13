@@ -1,7 +1,10 @@
 use std::{
-    cell::{Cell, RefCell},
     collections::HashSet,
     path::{Path, PathBuf},
+    sync::{
+        Mutex, MutexGuard, OnceLock, PoisonError,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use crate::{
@@ -12,6 +15,19 @@ use crate::{
 };
 use eyre::Report;
 use eyre::Result;
+use rayon::prelude::*;
+
+/// Recover a lock whose holder panicked.
+///
+/// Every piece of state behind a lock here is a plain collection that is only ever added
+/// to, so a panic part-way through leaves it structurally sound. Recovering keeps a panic
+/// in one branch of the walk from cascading into every other branch that touches the same
+/// state.
+fn recover<'a, T>(
+    result: Result<MutexGuard<'a, T>, PoisonError<MutexGuard<'a, T>>>,
+) -> MutexGuard<'a, T> {
+    result.unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Version-control metadata, never descended into.
 ///
@@ -19,9 +35,29 @@ use eyre::Result;
 /// pure cost, so they are skipped even under [`WalkOptions::walk_all`].
 pub const VCS_DIRS: &[&str] = &[".git", ".svn", ".hg", ".jj", ".bzr"];
 
+/// Package installation trees, never descended into.
+///
+/// A `node_modules` belonging to a project is claimed whole by the rule that matched its
+/// manifest, so nothing inside one is ever reclaimed separately anyway. A `node_modules`
+/// that no rule claims is a different thing entirely: an install prefix such as
+/// `~/.n/lib/node_modules` holds installed *software*, and the `node_modules` inside each
+/// installed package holds the dependencies that program needs in order to run.
+///
+/// Descending would offer to delete exactly those. An installed package carries a
+/// `package.json`, so one level down it is indistinguishable from a project -- and
+/// reclaiming its dependencies leaves the program on disk but broken, with no build to
+/// recreate them. `npm` bundling its own dependencies that way is how the tool that would
+/// reinstall them becomes the casualty.
+pub const INSTALLED_DIRS: &[&str] = &["node_modules"];
+
 #[derive(Debug, Default, Clone)]
 pub struct WalkOptions {
-    /// Absolute paths that are neither scanned nor reclaimed.
+    /// Absolute paths that are neither scanned nor reclaimed, nor anything under them.
+    ///
+    /// A subtree is what has to be protected: an application's own directory holds its
+    /// data and its bundled dependencies the same way a project holds its build output,
+    /// so ignoring the directory has to cover every level below it. Protecting only the
+    /// named path would leave a scan pointed inside it free to reclaim what it finds.
     pub ignores: HashSet<PathBuf>,
 
     /// Descend into every hidden directory, not only [`WalkOptions::scanned_hidden`].
@@ -38,53 +74,63 @@ pub struct WalkOptions {
 
     /// Do not cross onto another filesystem, so a scan cannot wander onto network mounts.
     pub one_file_system: bool,
+
+    /// Reclaim the directory a cache symlink points at, rather than passing the link by.
+    ///
+    /// Only an anchored rule follows links. A shared cache is routinely linked onto a
+    /// roomier disk, and the link is the only place a scan of the home directory meets
+    /// it. A link inside a project is another matter: a `node_modules` linked to a
+    /// sibling checkout is that checkout's, and reclaiming through it would reach out of
+    /// the project into something that was never its build output.
+    pub follow_links: bool,
 }
 
 /// Tracks paths already claimed by a rule, so nested candidates are not walked or re-reported.
 ///
-/// This wrapper encapsulates the `RefCell<HashSet<PathBuf>>` to ensure borrow/borrow_mut
-/// operations are temporary and cannot overlap.
+/// This wrapper encapsulates the lock, to ensure it is only ever held for the length of
+/// one operation and that check-then-insert cannot be split across two of them.
 #[derive(Debug, Default)]
 pub struct PrunedSet {
-    inner: RefCell<HashSet<PathBuf>>,
+    inner: Mutex<HashSet<PathBuf>>,
 }
 
 impl PrunedSet {
     /// Creates a new empty PrunedSet.
     pub fn new() -> Self {
-        Self {
-            inner: RefCell::new(HashSet::new()),
-        }
+        Self::default()
     }
 
     /// Checks if a path is directly in the pruned set.
     pub fn contains(&self, path: &Path) -> bool {
-        self.inner.borrow().contains(path)
+        recover(self.inner.lock()).contains(path)
     }
 
-    /// Inserts a path into the pruned set.
-    pub fn insert(&self, path: PathBuf) {
-        self.inner.borrow_mut().insert(path);
-    }
-
-    /// Whether this path overlaps a candidate that has already been reported.
+    /// Take `path` for a candidate, unless it overlaps one already taken.
     ///
     /// Reporting both a directory and something inside it would count the nested bytes
     /// twice in the total and race the two deletions against each other. Rules within a
     /// directory are applied in order, so the overlap can be found in either direction:
-    /// a nested target may be claimed before the parent enclosing it, or after.
+    /// a nested target may be claimed before the parent enclosing it, or after. A path
+    /// overlaps when any of its ancestors is already claimed, or when anything already
+    /// claimed lies inside it.
     ///
     /// Candidates stream to the user as they are found, so the first claim stands and the
     /// overlapping one is dropped. That can leave an enclosing directory unreclaimed,
     /// which is the safe direction to err for a tool that deletes things.
     ///
-    /// Returns true if:
-    /// - Any ancestor of `path` is in the pruned set (path is inside a claimed directory)
-    /// - Any path in the pruned set starts with `path` (path is a parent of something claimed)
-    pub fn is_already_claimed(&self, path: &Path) -> bool {
-        let pruned = self.inner.borrow();
-        path.ancestors().any(|ancestor| pruned.contains(ancestor))
-            || pruned.iter().any(|claimed| claimed.starts_with(path))
+    /// The check and the insert happen under one lock, which is what makes this safe to
+    /// call from several branches of the walk at once: two overlapping candidates found
+    /// concurrently would otherwise both pass the check and both be taken.
+    pub fn claim(&self, path: &Path) -> bool {
+        let mut pruned = recover(self.inner.lock());
+
+        let overlaps = path.ancestors().any(|ancestor| pruned.contains(ancestor))
+            || pruned.iter().any(|claimed| claimed.starts_with(path));
+
+        if !overlaps {
+            pruned.insert(path.to_path_buf());
+        }
+        !overlaps
     }
 }
 
@@ -95,14 +141,15 @@ pub struct Walker<FS: FileSystem, N: WalkNotifier> {
     options: WalkOptions,
     /// Paths already claimed by a rule, so nested candidates are not walked or re-reported.
     pruned: PrunedSet,
-    root_device: RefCell<Option<u64>>,
+    /// Settled once before the walk starts, so the branches can read it without locking.
+    root_device: OnceLock<Option<u64>>,
     /// Directories already walked, so a worktree reached both by descent and by its git
     /// record is scanned once and counted once.
-    visited: RefCell<HashSet<PathBuf>>,
+    visited: Mutex<HashSet<PathBuf>>,
     /// Checkouts of linked worktrees found during the walk, scanned once it finishes.
-    pending_worktrees: RefCell<Vec<FileInfo>>,
-    directories_scanned: Cell<usize>,
-    candidates_found: Cell<usize>,
+    pending_worktrees: Mutex<Vec<FileInfo>>,
+    directories_scanned: AtomicUsize,
+    candidates_found: AtomicUsize,
 }
 
 pub trait WalkNotifier {
@@ -120,7 +167,9 @@ enum DirOutcome {
     Reclaimed,
 }
 
-impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
+/// The walk shares one `&Walker` across rayon's threads, so every branch of it has to be
+/// able to read the walker at the same time as every other.
+impl<FS: FileSystem + Sync, N: WalkNotifier + Sync> Walker<FS, N> {
     pub fn new(fs: FS, rules: Vec<Rule>, notifier: N, options: WalkOptions) -> Self {
         Self {
             fs,
@@ -128,17 +177,18 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
             notifier,
             options,
             pruned: PrunedSet::new(),
-            root_device: RefCell::default(),
-            visited: RefCell::default(),
-            pending_worktrees: RefCell::default(),
-            directories_scanned: Cell::default(),
-            candidates_found: Cell::default(),
+            root_device: OnceLock::new(),
+            visited: Mutex::default(),
+            pending_worktrees: Mutex::default(),
+            directories_scanned: AtomicUsize::new(0),
+            candidates_found: AtomicUsize::new(0),
         }
     }
 
     pub fn walk_from_path(&self, path: &FileInfo) {
         if self.options.one_file_system {
-            *self.root_device.borrow_mut() = self.fs.device_id(path);
+            // Only ever set here, before any branch of the walk can read it.
+            let _ = self.root_device.set(self.fs.device_id(path));
         }
 
         log::info!(
@@ -150,8 +200,8 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         self.process_pending_worktrees(&path.path);
         log::info!(
             "scanned {} directories, found {} candidates",
-            self.directories_scanned.get(),
-            self.candidates_found.get()
+            self.directories_scanned.load(Ordering::Relaxed),
+            self.candidates_found.load(Ordering::Relaxed)
         );
 
         self.notifier.notify_walk_finish();
@@ -165,9 +215,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     /// and a worktree parked in `/tmp` is outside what was asked for.
     fn process_pending_worktrees(&self, root: &Path) {
         loop {
-            // Popped in its own statement: as the scrutinee of a `while let`, the borrow
-            // would live for the whole body, and walking a worktree can queue more.
-            let next = self.pending_worktrees.borrow_mut().pop();
+            // Popped in its own statement: as the scrutinee of a `while let`, the lock
+            // would be held for the whole body, and walking a worktree can queue more.
+            let next = recover(self.pending_worktrees.lock()).pop();
             let Some(worktree) = next else {
                 break;
             };
@@ -189,13 +239,17 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         if self.is_ignored(&file.path) || self.pruned.contains(&file.path) {
             return;
         }
-        if !self.visited.borrow_mut().insert(file.path.clone()) {
+        if !recover(self.visited.lock()).insert(file.path.clone()) {
             return;
         }
 
         match self.process_entries(file, depth) {
+            // Sibling directories are independent of one another, and the walk spends
+            // most of its time waiting on the filesystem rather than working, so reading
+            // several at once is close to free. Nested `for_each`es compose: rayon steals
+            // work across the whole tree rather than one level of it.
             Ok(DirOutcome::Descend(children)) => children
-                .iter()
+                .par_iter()
                 .for_each(|child| self.process_dir(child, depth + 1)),
             Ok(DirOutcome::Reclaimed) => (),
             Err(report) => self.notifier.notify_fail_to_scan(file, report),
@@ -204,8 +258,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
 
     fn process_entries(&self, dir: &FileInfo, depth: usize) -> Result<DirOutcome> {
         self.notifier.notify_entered_directory(dir);
-        self.directories_scanned
-            .set(self.directories_scanned.get() + 1);
+        self.directories_scanned.fetch_add(1, Ordering::Relaxed);
 
         let listing = self.fs.list_files(dir)?;
         listing
@@ -215,7 +268,7 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         let mut entries = listing.entries;
 
         for rule in &self.rules {
-            if !rule.matches(&entries) {
+            if !rule.matches(&dir.path, &entries) {
                 continue;
             }
 
@@ -261,9 +314,11 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         entries: &[FileInfo],
         targets: &[Target],
     ) -> HashSet<PathBuf> {
+        let follow_links = self.options.follow_links && rule.anchor().is_some();
+
         targets
             .iter()
-            .flat_map(|target| self.resolve_target(entries, target))
+            .flat_map(|target| self.resolve_target(entries, target, follow_links))
             .filter_map(|found| {
                 let path = found.path.clone();
                 self.claim(rule, found).then_some(path)
@@ -276,29 +331,88 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     /// The first component is matched against the already-listed entries, so the common
     /// single-component target costs no extra syscall; only a nested target such as
     /// `.angular/cache` reads further directories.
-    fn resolve_target(&self, entries: &[FileInfo], target: &Target) -> Vec<FileInfo> {
+    fn resolve_target(
+        &self,
+        entries: &[FileInfo],
+        target: &Target,
+        follow_links: bool,
+    ) -> Vec<FileInfo> {
         let Some((first, rest)) = target.components.split_first() else {
             return Vec::new();
         };
 
-        let mut found: Vec<FileInfo> = entries
-            .iter()
-            .filter(|entry| first.matches(&entry.name))
-            .cloned()
-            .collect();
+        // A link can stand at any level: `~/.npm` is as likely to be one as
+        // `~/.npm/_cacache`, and a link that is not followed stops the target short.
+        // One that cannot be followed stays the link it is, for a target to take or not.
+        let follow = |found: Vec<FileInfo>| -> Vec<FileInfo> {
+            if follow_links {
+                found
+                    .into_iter()
+                    .map(|entry| match entry.kind {
+                        SimpleFileKind::Symlink => self.follow_link(&entry).unwrap_or(entry),
+                        _ => entry,
+                    })
+                    .collect()
+            } else {
+                found
+            }
+        };
+
+        let mut found = follow(
+            entries
+                .iter()
+                .filter(|entry| first.matches(&entry.name))
+                .cloned()
+                .collect(),
+        );
 
         for component in rest {
-            found = found
-                .iter()
-                .filter(|entry| entry.kind == SimpleFileKind::Directory)
-                .filter_map(|dir| self.fs.list_files(dir).ok())
-                .flat_map(|listing| listing.entries)
-                .filter(|entry| component.matches(&entry.name))
-                .collect();
+            found = follow(
+                found
+                    .iter()
+                    .filter(|entry| entry.kind == SimpleFileKind::Directory)
+                    .filter_map(|dir| self.fs.list_files(dir).ok())
+                    .flat_map(|listing| listing.entries)
+                    .filter(|entry| component.matches(&entry.name))
+                    .collect(),
+            );
         }
 
         found.retain(|entry| target.kind.is_none_or(|kind| kind == entry.kind));
         found
+    }
+
+    /// The directory `link` points at, if the scan may reclaim it.
+    ///
+    /// The target lies outside anything the walk has vetted, so it is held to what the
+    /// walk would have required on the way there: nothing under an ignored directory --
+    /// which includes the user's XDG state -- and nothing on another filesystem when
+    /// asked to stay on one.
+    fn follow_link(&self, link: &FileInfo) -> Option<FileInfo> {
+        let real = self.fs.resolve_link(link)?;
+
+        if self.is_ignored(&real.path) {
+            log::debug!(
+                "not following {}: {} is ignored",
+                link.path.display(),
+                real.path.display()
+            );
+            None
+        } else if !self.stays_on_one_filesystem(&real) {
+            log::debug!(
+                "not following {}: {} is on another filesystem",
+                link.path.display(),
+                real.path.display()
+            );
+            None
+        } else {
+            log::debug!(
+                "following {} to {}",
+                link.path.display(),
+                real.path.display()
+            );
+            Some(real)
+        }
     }
 
     /// Report the records of worktrees whose checkout is gone.
@@ -325,15 +439,13 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     fn queue_linked_worktrees(&self, dir: &FileInfo) {
         let found = crate::git::linked_worktree_paths(&dir.path.join(".git"));
 
-        self.pending_worktrees
-            .borrow_mut()
-            .extend(found.into_iter().map(|path| {
-                let name = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                FileInfo::new(path, name, SimpleFileKind::Directory)
-            }));
+        recover(self.pending_worktrees.lock()).extend(found.into_iter().map(|path| {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            FileInfo::new(path, name, SimpleFileKind::Directory)
+        }));
     }
 
     /// Claim `file` for `rule` and report it, unless it must not be claimed.
@@ -342,10 +454,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     /// and recording what has been claimed are decided in one place instead of in each
     /// caller. Returns whether the claim was taken.
     fn claim(&self, rule: &Rule, file: FileInfo) -> bool {
-        if self.is_ignored(&file.path) || self.pruned.is_already_claimed(&file.path) {
+        if self.is_ignored(&file.path) || !self.pruned.claim(&file.path) {
             return false;
         }
-        self.pruned.insert(file.path.clone());
 
         let size = match self.fs.file_size(&file) {
             Ok(size) => Some(size),
@@ -364,14 +475,21 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
                 |size| format!("{size} bytes")
             )
         );
-        self.candidates_found.update(|n| n + 1);
+        self.candidates_found.fetch_add(1, Ordering::Relaxed);
         self.notifier
             .notify_candidate_for_removal(RemovalCandidate::new(rule.name.clone(), file, size));
         true
     }
 
+    /// Whether `path` is ignored, or lies under something that is.
+    ///
+    /// Checked against every ancestor rather than the path alone, so an ignored
+    /// directory protects what is inside it even when the walk reaches that content
+    /// directly -- as a scan root, a linked worktree checkout, or a followed symlink --
+    /// without ever visiting the ignored directory itself.
     fn is_ignored(&self, path: &Path) -> bool {
-        self.options.ignores.contains(path)
+        path.ancestors()
+            .any(|ancestor| self.options.ignores.contains(ancestor))
     }
 
     fn is_walkable(&self, file: &FileInfo, depth: usize) -> bool {
@@ -391,6 +509,9 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
         if VCS_DIRS.contains(&name) {
             log::trace!("skipping {name}: version control metadata");
             false
+        } else if INSTALLED_DIRS.contains(&name) {
+            log::trace!("skipping {name}: installed packages, not build output");
+            false
         } else if name.starts_with('.') {
             let scannable = self.options.walk_all || self.options.scanned_hidden.contains(name);
             if !scannable {
@@ -404,7 +525,10 @@ impl<FS: FileSystem, N: WalkNotifier> Walker<FS, N> {
     }
 
     fn stays_on_one_filesystem(&self, file: &FileInfo) -> bool {
-        match (self.options.one_file_system, *self.root_device.borrow()) {
+        match (
+            self.options.one_file_system,
+            self.root_device.get().copied().flatten(),
+        ) {
             (true, Some(root)) => self.fs.device_id(file).is_none_or(|device| device == root),
             _ => true,
         }

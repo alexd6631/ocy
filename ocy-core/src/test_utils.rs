@@ -70,7 +70,7 @@ impl FileSystem for MockFs {
         if let Some(p) = path {
             path_buf.push(p);
         }
-        
+
         Ok(FileInfo::new(
             path_buf,
             "user".to_string(),

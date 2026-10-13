@@ -8,7 +8,12 @@ use ocy_core::{
     models::{FileInfo, RemovalAction, RemovalCandidate},
     walker::WalkNotifier,
 };
-use std::{cell::RefCell, io::IsTerminal, path::Path, time::Duration};
+use std::{
+    io::IsTerminal,
+    path::Path,
+    sync::{Mutex, PoisonError},
+    time::Duration,
+};
 
 /// Whether the animated progress display should be used at all.
 ///
@@ -125,7 +130,9 @@ pub struct VecWalkNotifier<'a> {
     /// rules happen to fire. This is issue #3.
     name_width: usize,
     pub progress_bar: ProgressBar,
-    pub to_remove: RefCell<Vec<RemovalCandidate>>,
+    /// Behind a lock rather than a [`RefCell`](std::cell::RefCell): the walk reports from
+    /// several threads at once.
+    pub to_remove: Mutex<Vec<RemovalCandidate>>,
 }
 
 impl<'a> VecWalkNotifier<'a> {
@@ -134,7 +141,7 @@ impl<'a> VecWalkNotifier<'a> {
             base_path,
             name_width,
             progress_bar: spinner(animated),
-            to_remove: RefCell::default(),
+            to_remove: Mutex::default(),
         }
     }
 }
@@ -171,7 +178,12 @@ impl<'a> WalkNotifier for &VecWalkNotifier<'a> {
             ),
         );
 
-        self.to_remove.borrow_mut().push(candidate);
+        // Recovered rather than unwrapped: a panic in one branch of the walk must not
+        // throw away the candidates every other branch has already found.
+        self.to_remove
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(candidate);
     }
 
     fn notify_fail_to_scan(&self, e: &FileInfo, report: Report) {

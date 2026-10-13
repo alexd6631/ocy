@@ -14,7 +14,7 @@ use ocy_core::rule::Rule;
 use ocy_core::rule::widest_name;
 use ocy_core::walker::{WalkOptions, Walker};
 use ocy_core::{cleaner::Cleaner, models::RemovalCandidate};
-use rules::{SCANNED_HIDDEN_DIRS, rule_names, standard_rules};
+use rules::{protected_state_dirs, rule_name_matches, rule_names, scanned_hidden, standard_rules};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -51,15 +51,16 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
 
     let rules = rules_for_options(options)?;
 
+    let mut ignores = options.ignores_set()?;
+    ignores.extend(protected_state_dirs());
+
     let walk_options = WalkOptions {
-        ignores: options.ignores_set()?,
+        ignores,
         walk_all: options.walk_all,
-        scanned_hidden: SCANNED_HIDDEN_DIRS
-            .iter()
-            .map(|d| (*d).to_string())
-            .collect(),
+        scanned_hidden: scanned_hidden(&rules),
         max_depth: options.max_depth,
         one_file_system: options.one_file_system,
+        follow_links: !options.no_follow_links,
     };
 
     if walk_options.one_file_system && RealFileSystem.device_id(&current_directory).is_none() {
@@ -95,14 +96,17 @@ fn run(options: &OcyOptions) -> Result<ExitCode> {
 }
 
 fn rules_for_options(options: &OcyOptions) -> Result<Vec<Rule>> {
-    let all_rules = standard_rules(options.allow_commands)?;
+    let all_rules = standard_rules(options.allow_commands, options.clean_caches)?;
     let all_rule_names = rule_names(&all_rules);
 
     let selected_rules = options.selected_rules();
 
-    for rule_name in selected_rules {
-        if !all_rule_names.contains(rule_name.as_str()) {
-            eyre::bail!("Unknown rule: {}", rule_name);
+    for requested in selected_rules {
+        if !all_rule_names
+            .iter()
+            .any(|name| rule_name_matches(name, requested))
+        {
+            eyre::bail!("Unknown rule: {}", requested);
         }
     }
 
@@ -111,7 +115,11 @@ fn rules_for_options(options: &OcyOptions) -> Result<Vec<Rule>> {
     } else {
         all_rules
             .into_iter()
-            .filter(|rule| selected_rules.contains(&rule.name.to_string()))
+            .filter(|rule| {
+                selected_rules
+                    .iter()
+                    .any(|requested| rule_name_matches(&rule.name, requested))
+            })
             .collect()
     };
     Ok(filtered_rules)
@@ -128,7 +136,10 @@ fn perform_walk(
     let walker = Walker::new(RealFileSystem, rules, &notifier, walk_options);
 
     walker.walk_from_path(start_directory);
-    Ok(notifier.to_remove.into_inner())
+    Ok(notifier
+        .to_remove
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
 fn perform_clean(current_directory: &FileInfo, files: Vec<RemovalCandidate>, animated: bool) {
@@ -165,7 +176,7 @@ fn print_banner() {
 }
 
 fn print_rules() -> Result<()> {
-    let rules = rule_names(&standard_rules(true)?);
+    let rules = rule_names(&standard_rules(true, true)?);
     let mut rules: Vec<Arc<str>> = rules.into_iter().collect();
     rules.sort();
 

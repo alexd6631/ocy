@@ -45,6 +45,12 @@ pub trait FileSystem {
     fn device_id(&self, _file: &FileInfo) -> Option<u64> {
         None
     }
+
+    /// The directory a symlink ultimately points at, or [`None`] if it points at no
+    /// directory -- or if links cannot be followed here.
+    fn resolve_link(&self, _file: &FileInfo) -> Option<FileInfo> {
+        None
+    }
 }
 
 pub trait FileSystemClean {
@@ -91,6 +97,13 @@ impl FileSystem for RealFileSystem {
     #[cfg(unix)]
     fn device_id(&self, file: &FileInfo) -> Option<u64> {
         fs::symlink_metadata(&file.path).ok().map(|m| m.dev())
+    }
+
+    fn resolve_link(&self, file: &FileInfo) -> Option<FileInfo> {
+        let real = file.path.canonicalize().ok().filter(|real| real.is_dir())?;
+        let name = real.file_name()?.to_string_lossy().into_owned();
+
+        Some(FileInfo::new(real, name, SimpleFileKind::Directory))
     }
 }
 

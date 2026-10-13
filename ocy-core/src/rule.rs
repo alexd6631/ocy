@@ -1,5 +1,6 @@
 use crate::models::{FileInfo, SimpleFileKind};
 use glob::{Pattern, PatternError};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Why a [`Rule`] could not be built.
@@ -96,29 +97,65 @@ pub enum CleanAction {
 pub struct Rule {
     pub name: Arc<str>,
     markers: Vec<Pattern>,
+    /// The one directory this rule applies to, or [`None`] to apply wherever the markers
+    /// match.
+    anchor: Option<PathBuf>,
     action: CleanAction,
 }
 
 impl Rule {
     /// A rule that reclaims `targets` from any directory containing all of `markers`.
     pub fn remove(name: &str, markers: &[&str], targets: &[&str]) -> Result<Self, RuleError> {
+        Self::new(
+            name,
+            markers,
+            CleanAction::Remove(directory_targets(name, targets)?),
+        )
+    }
+
+    /// A rule that reclaims `targets` from one specific directory.
+    ///
+    /// A shared tool cache is identified by where it is rather than by anything it holds:
+    /// `~/.cache/sccache` contains nothing but hex-named shards, a shape that describes
+    /// every other content-addressed store just as well. Anchoring to the path is exact,
+    /// so such a rule cannot fire anywhere it was not meant to -- which is what makes
+    /// reclaiming something outside any project tree safe to offer at all.
+    ///
+    /// The anchor is not a scan root. It is still the walk that has to reach the
+    /// directory, so a cache outside the tree `ocy` was pointed at stays untouched.
+    pub fn remove_at(name: &str, anchor: PathBuf, targets: &[&str]) -> Result<Self, RuleError> {
+        Ok(Self {
+            name: name.into(),
+            // The anchor is what identifies the directory, so there is nothing to look
+            // for inside it and nothing for the empty-marker check to protect against.
+            markers: Vec::new(),
+            anchor: Some(anchor),
+            action: CleanAction::Remove(directory_targets(name, targets)?),
+        })
+    }
+
+    /// [`Rule::remove_at`], for targets that are not plain directories.
+    ///
+    /// A system package cache keeps its downloads as loose files beside a lock and a
+    /// working directory the package manager needs to keep, so directories alone cannot
+    /// say what to reclaim from it.
+    pub fn remove_targets_at(
+        name: &str,
+        anchor: PathBuf,
+        targets: Vec<Target>,
+    ) -> Result<Self, RuleError> {
         if targets.is_empty() {
             Err(RuleError::NoTargets {
                 name: name.to_string(),
             })
         } else {
-            let targets = targets
-                .iter()
-                .map(|target| {
-                    Target::directory(target).map_err(|source| RuleError::InvalidPattern {
-                        name: name.to_string(),
-                        pattern: (*target).to_string(),
-                        source,
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Self::new(name, markers, CleanAction::Remove(targets))
+            Ok(Self {
+                name: name.into(),
+                // As for `remove_at`: the anchor alone identifies the directory.
+                markers: Vec::new(),
+                anchor: Some(anchor),
+                action: CleanAction::Remove(targets),
+            })
         }
     }
 
@@ -174,6 +211,7 @@ impl Rule {
             Ok(Self {
                 name: name.into(),
                 markers,
+                anchor: None,
                 action,
             })
         }
@@ -183,15 +221,45 @@ impl Rule {
         &self.action
     }
 
-    /// Whether a directory holding `entries` is a project this rule applies to.
+    /// The single directory this rule applies to, for a rule that names one.
+    pub fn anchor(&self) -> Option<&Path> {
+        self.anchor.as_deref()
+    }
+
+    /// Whether `dir`, holding `entries`, is a project this rule applies to.
     ///
     /// Every marker must be present. Alternatives are expressed as globs
     /// (`build.gradle*`) or as separate rules, so there is no any-of mode to configure.
-    pub fn matches(&self, entries: &[FileInfo]) -> bool {
-        self.markers
-            .iter()
-            .all(|marker| entries.iter().any(|entry| marker.matches(&entry.name)))
+    /// An anchored rule additionally applies to nothing but its own directory.
+    pub fn matches(&self, dir: &Path, entries: &[FileInfo]) -> bool {
+        self.anchor
+            .as_ref()
+            .is_none_or(|anchor| anchor.as_path() == dir)
+            && self
+                .markers
+                .iter()
+                .all(|marker| entries.iter().any(|entry| marker.matches(&entry.name)))
     }
+}
+
+/// Parse `targets` as directory paths relative to the directory a rule matched.
+fn directory_targets(name: &str, targets: &[&str]) -> Result<Vec<Target>, RuleError> {
+    if targets.is_empty() {
+        return Err(RuleError::NoTargets {
+            name: name.to_string(),
+        });
+    }
+
+    targets
+        .iter()
+        .map(|target| {
+            Target::directory(target).map_err(|source| RuleError::InvalidPattern {
+                name: name.to_string(),
+                pattern: (*target).to_string(),
+                source,
+            })
+        })
+        .collect()
 }
 
 /// The width of the widest rule name, for column alignment.

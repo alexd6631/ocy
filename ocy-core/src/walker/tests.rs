@@ -3,18 +3,21 @@ use crate::filesystem::FileSystem;
 use crate::models::{FileInfo, RemovalAction, RemovalCandidate};
 use crate::rule::Rule;
 use crate::test_utils::{MockFs, MockFsNode};
-use std::{cell::RefCell, collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::Mutex};
 
 #[derive(Debug, Default)]
 struct VecWalkNotifier {
-    to_remove: RefCell<Vec<RemovalCandidate>>,
+    to_remove: Mutex<Vec<RemovalCandidate>>,
 }
 
 impl WalkNotifier for &VecWalkNotifier {
     fn notify_entered_directory(&self, _dir: &FileInfo) {}
 
     fn notify_candidate_for_removal(&self, candidate: RemovalCandidate) {
-        self.to_remove.borrow_mut().push(candidate);
+        self.to_remove
+            .lock()
+            .expect("notifier lock")
+            .push(candidate);
     }
 
     fn notify_fail_to_scan(&self, _e: &FileInfo, _report: eyre::Error) {}
@@ -34,6 +37,7 @@ fn reclaimed(tree: MockFsNode, rules: Vec<Rule>, options: WalkOptions) -> Vec<St
     let mut paths: Vec<String> = notifier
         .to_remove
         .into_inner()
+        .expect("notifier lock")
         .into_iter()
         .map(|candidate| match candidate.action {
             RemovalAction::Delete { file_info, .. } => file_info.path.display().to_string(),
@@ -290,6 +294,60 @@ fn honours_ignores() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Ignoring a directory protects everything under it, even when the scan is pointed
+/// inside that directory. A walk root is never vetted by the descent that would normally
+/// have stopped at the ignored parent, so the check has to cover the whole subtree.
+#[test]
+fn an_ignored_directory_protects_a_project_beneath_it() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let app = temp.path().join("app");
+    let project = app.join("nested").join("project");
+    std::fs::create_dir_all(project.join("target"))?;
+    std::fs::write(project.join("Cargo.toml"), "")?;
+
+    let rules = || vec![Rule::remove("Cargo", &["Cargo.toml"], &["target"]).expect("rule")];
+    let ignores = WalkOptions {
+        ignores: HashSet::from([app.canonicalize()?]),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vec!["target"],
+        reclaimed_on_disk(&project, rules(), WalkOptions::default()),
+        "the fixture should be reclaimable without the ignore"
+    );
+    assert!(
+        reclaimed_on_disk(&project, rules(), ignores).is_empty(),
+        "an ignored directory must protect what is beneath it"
+    );
+    Ok(())
+}
+
+/// A linked worktree is reached through its git record rather than by descent, so
+/// ignoring the directory holding it has to stop that path in too. Otherwise the
+/// protection would hold only for trees the walk happened to enter the ordinary way.
+#[test]
+fn an_ignored_directory_protects_a_linked_worktree_beneath_it() -> eyre::Result<()> {
+    let temp = tempfile::tempdir()?;
+    repo_with_hidden_worktree(temp.path())?;
+
+    let rules = vec![
+        Rule::remove("Cargo", &["Cargo.toml"], &["target"])?,
+        Rule::prune_stale_worktrees("Git worktree", &[".git"])?,
+    ];
+    let options = WalkOptions {
+        ignores: HashSet::from([temp.path().join("repo").join(".claude").canonicalize()?]),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vec!["repo/target"],
+        reclaimed_on_disk(temp.path(), rules, options),
+        "the worktree under the ignored directory must not be reclaimed"
+    );
+    Ok(())
+}
+
 #[test]
 fn reports_a_command_rule_against_its_directory() -> eyre::Result<()> {
     let tree = under_home(vec![MockFsNode::dir(
@@ -332,6 +390,119 @@ fn never_claims_a_path_inside_another_candidate() -> eyre::Result<()> {
     Ok(())
 }
 
+/// An install prefix is not a project tree. `~/.n/lib/node_modules/npm` carries a
+/// `package.json` and a `node_modules` full of the dependencies npm needs to run, so
+/// descending one level would offer to delete them and leave npm on disk but broken.
+#[test]
+fn never_descends_into_an_installation_tree() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "lib",
+        vec![MockFsNode::dir(
+            "node_modules",
+            vec![MockFsNode::dir(
+                "npm",
+                vec![
+                    MockFsNode::file("package.json"),
+                    MockFsNode::dir("node_modules", vec![MockFsNode::empty_dir("graceful-fs")]),
+                ],
+            )],
+        )],
+    )]);
+
+    let rules = vec![Rule::remove(
+        "NodeJS",
+        &["package.json"],
+        &["node_modules"],
+    )?];
+    let options = WalkOptions {
+        walk_all: true,
+        ..Default::default()
+    };
+    let found = reclaimed(tree, rules, options);
+
+    assert!(
+        found.is_empty(),
+        "offered to gut an install prefix: {found:?}"
+    );
+    Ok(())
+}
+
+/// Not descending must not stop a project's own `node_modules` being claimed: that fires
+/// on the manifest beside it, not by looking inside.
+#[test]
+fn still_reclaims_a_projects_own_node_modules() -> eyre::Result<()> {
+    let tree = under_home(vec![MockFsNode::dir(
+        "app",
+        vec![
+            MockFsNode::file("package.json"),
+            MockFsNode::dir("node_modules", vec![MockFsNode::empty_dir("left-pad")]),
+        ],
+    )]);
+
+    let rules = vec![Rule::remove(
+        "NodeJS",
+        &["package.json"],
+        &["node_modules"],
+    )?];
+    let found = reclaimed(tree, rules, WalkOptions::default());
+
+    assert_eq!(vec!["/home/user/app/node_modules"], found);
+    Ok(())
+}
+
+/// Sibling directories are walked concurrently, so a wide tree has to come back with
+/// every candidate, exactly once, however the branches happen to interleave.
+#[test]
+fn finds_every_candidate_across_a_wide_tree() -> eyre::Result<()> {
+    let projects: Vec<MockFsNode> = (0..256)
+        .map(|n| {
+            MockFsNode::dir(
+                &format!("project{n:03}"),
+                vec![
+                    MockFsNode::file("Cargo.toml"),
+                    MockFsNode::empty_dir("target"),
+                ],
+            )
+        })
+        .collect();
+
+    let found = reclaimed(under_home(projects), cargo_rule(), WalkOptions::default());
+
+    let unique: HashSet<&String> = found.iter().collect();
+    assert_eq!(256, found.len(), "dropped or duplicated candidates");
+    assert_eq!(found.len(), unique.len(), "reported a candidate twice");
+    Ok(())
+}
+
+/// A shared cache is named by its path, and directories called `.cache` are everywhere.
+/// An anchored rule has to pass over every one of them but its own.
+#[test]
+fn an_anchored_rule_fires_only_at_its_anchor() -> eyre::Result<()> {
+    let tree = under_home(vec![
+        MockFsNode::dir(".cache", vec![MockFsNode::empty_dir("sccache")]),
+        MockFsNode::dir(
+            "project",
+            vec![MockFsNode::dir(
+                ".cache",
+                vec![MockFsNode::empty_dir("sccache")],
+            )],
+        ),
+    ]);
+
+    let found = reclaimed(
+        tree,
+        vec![Rule::remove_at(
+            "Tool cache",
+            PathBuf::from("/home/user/.cache"),
+            &["sccache"],
+        )?],
+        hidden(&[".cache"]),
+    );
+
+    assert_eq!(vec!["/home/user/.cache/sccache"], found);
+    Ok(())
+}
+
 /// Walk a real temporary tree, rather than [`MockFs`], and return the reclaimed paths
 /// relative to the root.
 fn reclaimed_on_disk(
@@ -351,6 +522,7 @@ fn reclaimed_on_disk(
     let mut paths: Vec<String> = notifier
         .to_remove
         .into_inner()
+        .expect("notifier lock")
         .into_iter()
         .filter_map(|candidate| match candidate.action {
             RemovalAction::Delete { file_info, .. } => Some(

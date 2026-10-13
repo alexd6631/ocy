@@ -26,7 +26,7 @@ fn different_ecosystems_get_different_colours() {
 fn every_built_in_rule_has_a_curated_tint() -> eyre::Result<()> {
     let curated: HashSet<&str> = RULE_TINTS.iter().map(|(name, _)| *name).collect();
 
-    let uncurated: Vec<String> = standard_rules(true)?
+    let uncurated: Vec<String> = standard_rules(true, true)?
         .iter()
         .map(|rule| rule.name.to_string())
         .filter(|name| !curated.contains(name.as_str()))
